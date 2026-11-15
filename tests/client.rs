@@ -7,31 +7,13 @@
 
 mod common;
 
-use std::net::SocketAddr;
-
-use common::{response, serve_once};
+use common::{config_at, response, serve_once};
 
 use harness::client::{Client, Error};
-use harness::config::Config;
 use harness::request::Request;
 
 const REPLY_BODY: &str = r#"{"choices":[{"message":{"content":"ok"}}],
                              "usage":{"prompt_tokens":3,"completion_tokens":1}}"#;
-
-fn config_at(addr: SocketAddr, key: &str) -> Config {
-    let entries = [
-        ("LLM_BASE_URL".to_string(), format!("http://{addr}/v1")),
-        ("LLM_API_KEY".to_string(), key.to_string()),
-        ("LLM_MODEL".to_string(), "m".to_string()),
-    ];
-    Config::from_lookup(move |name| {
-        entries
-            .iter()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.clone())
-    })
-    .unwrap()
-}
 
 #[tokio::test]
 async fn a_successful_call_sends_the_right_request_and_returns_the_reply() {

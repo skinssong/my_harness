@@ -1,16 +1,25 @@
-//! S1: one prompt in, one answer out, cost known.
+//! An agent harness built from the loop outwards.
 //!
-//! Data travels one way and crosses exactly one boundary, the HTTP call.
-//! Everything on either side of it is a pure function of values.
+//! S1 was one call and its cost. S2 adds tools: the model can ask for work, see
+//! the result, and continue. Every phase after this composes with the same
+//! pieces: a request, a client, a registry of tools, and the loop that joins
+//! them.
 
+pub mod agent;
 pub mod client;
 pub mod config;
 pub mod message;
 pub mod reply;
 pub mod request;
+pub mod tool;
+pub mod tools;
+pub mod workspace;
 
+pub use agent::{Limits, Outcome};
 pub use client::Client;
 pub use config::{Config, ConfigError};
 pub use message::{Message, ToolCall};
 pub use reply::{Reply, ReplyError, Usage};
 pub use request::{Request, RequestError};
+pub use tool::{Observation, Registry, Tool, ToolError};
+pub use workspace::Workspace;

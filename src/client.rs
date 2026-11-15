@@ -9,6 +9,7 @@
 use std::time::Duration;
 
 use serde::Serialize;
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::config::Config;
@@ -41,16 +42,26 @@ struct Wire<'a> {
     model: &'a str,
     messages: &'a [Message],
     temperature: f32,
+    #[serde(skip_serializing_if = "none_when_empty")]
+    tools: &'a [Value],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'static str>,
 }
 
-impl<'a> From<&'a Request> for Wire<'a> {
-    fn from(request: &'a Request) -> Self {
+impl<'a> Wire<'a> {
+    fn new(request: &'a Request, tools: &'a [Value]) -> Self {
         Self {
             model: request.model(),
             messages: request.messages(),
             temperature: TEMPERATURE,
+            tools,
+            tool_choice: if tools.is_empty() { None } else { Some("auto") },
         }
     }
+}
+
+fn none_when_empty<T>(value: &&[T]) -> bool {
+    value.is_empty()
 }
 
 #[derive(Debug, Error)]
@@ -68,6 +79,8 @@ pub struct Client {
     http: reqwest::Client,
     config: Config,
     session: String,
+    /// The `tools` array sent with every request. Empty means a plain chat.
+    tools: Vec<Value>,
 }
 
 impl Client {
@@ -81,7 +94,14 @@ impl Client {
             http,
             config,
             session: session_id(),
+            tools: Vec::new(),
         })
+    }
+
+    /// Offer the model a set of tools. Without this the request is a plain chat.
+    pub fn with_tools(mut self, tools: Vec<Value>) -> Self {
+        self.tools = tools;
+        self
     }
 
     pub async fn complete(&self, request: &Request) -> Result<Reply, Error> {
@@ -90,7 +110,7 @@ impl Client {
             .post(self.config.endpoint())
             .bearer_auth(self.config.api_key())
             .header(SESSION_HEADER, self.session.as_str())
-            .json(&Wire::from(request))
+            .json(&Wire::new(request, &self.tools))
             .send()
             .await
             .map_err(|err| Error::Transport(err.to_string()))?;
