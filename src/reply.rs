@@ -1,20 +1,24 @@
-//! The reply, reduced to what S1 needs: the text and what it cost.
+//! The reply, reduced to what the harness needs.
 //!
-//! The provider sends a large object and we keep two things. `total_tokens` is
-//! on the wire and is deliberately not stored — the total is derived from the
-//! two parts, so the number cannot contradict itself. Usage is required rather
-//! than optional: "cost known" is the requirement, so a reply that omits it is
-//! a failure, not a success with an unknown price.
+//! A reply is one of two things, and the enum says so: an answer with text, or
+//! a request for one or more tool calls. A reply that is neither cannot be
+//! constructed, which is the S2 correction to S1's "content is required" —
+//! a tool-calling reply carries `"content": null` and is perfectly valid.
+//!
+//! `total_tokens` is on the wire and is deliberately not stored: the total is
+//! derived from the two parts, so the number cannot contradict itself.
 
 use serde::Deserialize;
 use thiserror::Error;
+
+use crate::message::ToolCall;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ReplyError {
     #[error("the reply carried no choices")]
     NoChoices,
-    #[error("the reply carried no message content")]
-    NoContent,
+    #[error("the reply carried neither text nor a tool call")]
+    Empty,
     #[error("the reply carried no token usage")]
     NoUsage,
     #[error("the reply was not readable: {0}")]
@@ -28,6 +32,10 @@ pub struct Usage {
 }
 
 impl Usage {
+    pub fn new(input: u32, output: u32) -> Self {
+        Self { input, output }
+    }
+
     pub fn input(&self) -> u32 {
         self.input
     }
@@ -39,47 +47,111 @@ impl Usage {
     pub fn total(&self) -> u32 {
         self.input + self.output
     }
+
+    /// Running cost across every call in a loop.
+    pub fn plus(self, other: Self) -> Self {
+        Self {
+            input: self.input + other.input,
+            output: self.output + other.output,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Reply {
-    text: String,
-    usage: Usage,
+pub enum Reply {
+    Answer {
+        text: String,
+        usage: Usage,
+    },
+    Calling {
+        calls: Vec<ToolCall>,
+        /// Whatever the model said alongside the calls, which is often nothing.
+        text: Option<String>,
+        usage: Usage,
+    },
 }
 
 impl Reply {
     pub fn from_json(raw: &str) -> Result<Self, ReplyError> {
         let wire: Wire =
             serde_json::from_str(raw).map_err(|err| ReplyError::Malformed(err.to_string()))?;
-        let choice = wire.choices.into_iter().next().ok_or(ReplyError::NoChoices)?;
-        let text = choice.message.content.ok_or(ReplyError::NoContent)?;
-        let usage = wire.usage.ok_or(ReplyError::NoUsage)?;
-        Ok(Self {
-            text,
-            usage: Usage {
-                input: usage.prompt_tokens,
-                output: usage.completion_tokens,
-            },
-        })
-    }
+        let choice = wire
+            .choices
+            .into_iter()
+            .next()
+            .ok_or(ReplyError::NoChoices)?;
+        let usage = wire.usage.ok_or(ReplyError::NoUsage)?.into();
 
-    pub fn text(&self) -> &str {
-        &self.text
+        let calls: Vec<ToolCall> = choice
+            .message
+            .tool_calls
+            .into_iter()
+            .map(|call| ToolCall {
+                id: call.id,
+                name: call.function.name,
+                arguments: call.function.arguments,
+            })
+            .collect();
+        let text = choice.message.content;
+
+        if !calls.is_empty() {
+            Ok(Self::Calling { calls, text, usage })
+        } else if let Some(text) = text {
+            Ok(Self::Answer { text, usage })
+        } else {
+            Err(ReplyError::Empty)
+        }
     }
 
     pub fn usage(&self) -> Usage {
-        self.usage
+        match self {
+            Self::Answer { usage, .. } | Self::Calling { usage, .. } => *usage,
+        }
     }
 
-    /// What the operator sees: the answer, then what it cost.
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Self::Answer { text, .. } => Some(text),
+            Self::Calling { text, .. } => text.as_deref(),
+        }
+    }
+
+    pub fn calls(&self) -> &[ToolCall] {
+        match self {
+            Self::Answer { .. } => &[],
+            Self::Calling { calls, .. } => calls,
+        }
+    }
+
+    pub fn is_answer(&self) -> bool {
+        matches!(self, Self::Answer { .. })
+    }
+
+    /// What the operator sees. Only an answer ends a run, so only an answer
+    /// carries the cost line.
     pub fn report(&self) -> String {
-        format!(
-            "{}\n\ntokens {} in · {} out · {} total",
-            self.text,
-            self.usage.input,
-            self.usage.output,
-            self.usage.total()
-        )
+        match self {
+            Self::Answer { text, usage } => format!(
+                "{}\n\ntokens {} in · {} out · {} total",
+                text,
+                usage.input,
+                usage.output,
+                usage.total()
+            ),
+            Self::Calling { calls, .. } => {
+                let names: Vec<&str> = calls.iter().map(|call| call.name.as_str()).collect();
+                format!("the model asked for {} call(s): {}", calls.len(), names.join(", "))
+            }
+        }
+    }
+}
+
+impl From<WireUsage> for Usage {
+    fn from(wire: WireUsage) -> Self {
+        Self {
+            input: wire.prompt_tokens,
+            output: wire.completion_tokens,
+        }
     }
 }
 
@@ -102,6 +174,21 @@ struct WireChoice {
 struct WireMessage {
     #[serde(default)]
     content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<WireToolCall>,
+}
+
+#[derive(Deserialize)]
+struct WireToolCall {
+    id: String,
+    function: WireFunction,
+}
+
+#[derive(Deserialize)]
+struct WireFunction {
+    name: String,
+    #[serde(default)]
+    arguments: String,
 }
 
 #[derive(Deserialize)]

@@ -5,10 +5,12 @@
 
 pub mod client;
 pub mod config;
+pub mod message;
 pub mod reply;
 pub mod request;
 
 pub use client::Client;
 pub use config::{Config, ConfigError};
+pub use message::{Message, ToolCall};
 pub use reply::{Reply, ReplyError, Usage};
-pub use request::{Message, Request, RequestError, Role};
+pub use request::{Request, RequestError};

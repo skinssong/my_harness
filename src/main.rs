@@ -26,9 +26,10 @@ async fn main() -> ExitCode {
     }
 
     match run(&args).await {
+        Ok(Reply::Answer { .. }) => ExitCode::SUCCESS,
         Ok(reply) => {
-            println!("{}", reply.report());
-            ExitCode::SUCCESS
+            eprintln!("{}", reply.report());
+            ExitCode::FAILURE
         }
         Err(message) => {
             eprintln!("{message}");
@@ -42,10 +43,14 @@ async fn run(args: &[String]) -> Result<Reply, String> {
     let config = Config::from_env().map_err(|err| err.to_string())?;
     let request = Request::new(config.model(), SYSTEM, &task).map_err(|err| err.to_string())?;
     let client = Client::new(config).map_err(|err| err.to_string())?;
-    client
+    let reply = client
         .complete(&request)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    if reply.is_answer() {
+        println!("{}", reply.report());
+    }
+    Ok(reply)
 }
 
 fn task(args: &[String]) -> Result<String, String> {

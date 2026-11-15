@@ -1,28 +1,13 @@
-//! The request: a model and two messages.
+//! The request: a model and the messages so far.
 //!
 //! This type knows nothing about the provider. The envelope it will be posted
 //! in — field names, the temperature constant — belongs to the adapter that
 //! speaks to that provider, in the same way `reply.rs` keeps its wire structs
 //! private.
-//!
-//! `Role` carries only the two variants S1 can emit. `assistant` and `tool`
-//! arrive with history at S2, so today a request cannot name them.
 
-use serde::Serialize;
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    System,
-    User,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Message {
-    pub role: Role,
-    pub content: String,
-}
+use crate::message::Message;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RequestError {
@@ -46,17 +31,19 @@ impl Request {
         }
         Ok(Self {
             model: model.to_string(),
-            messages: vec![
-                Message {
-                    role: Role::System,
-                    content: system.to_string(),
-                },
-                Message {
-                    role: Role::User,
-                    content: task.to_string(),
-                },
-            ],
+            messages: vec![Message::system(system), Message::user(task)],
         })
+    }
+
+    /// The same conversation with more said in it: used by the loop to carry a
+    /// tool result back.
+    pub fn continued(&self, extra: Vec<Message>) -> Self {
+        let mut messages = self.messages.clone();
+        messages.extend(extra);
+        Self {
+            model: self.model.clone(),
+            messages,
+        }
     }
 
     pub fn model(&self) -> &str {

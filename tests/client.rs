@@ -40,7 +40,7 @@ async fn a_successful_call_sends_the_right_request_and_returns_the_reply() {
     let request = Request::new("m", "be brief", "reply with the word ok").unwrap();
 
     let reply = client.complete(&request).await.unwrap();
-    assert_eq!(reply.text(), "ok");
+    assert_eq!(reply.text(), Some("ok"));
     assert_eq!(reply.usage().total(), 4);
 
     let seen = seen.await.unwrap();

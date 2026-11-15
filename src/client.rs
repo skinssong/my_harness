@@ -13,7 +13,8 @@ use thiserror::Error;
 
 use crate::config::Config;
 use crate::reply::{Reply, ReplyError};
-use crate::request::{Message, Request};
+use crate::message::Message;
+use crate::request::Request;
 
 /// A call that never returns is worse than one that fails. One place, one value.
 const TIMEOUT: Duration = Duration::from_secs(60);

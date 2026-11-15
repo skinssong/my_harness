@@ -6,7 +6,8 @@
 
 use harness::config::{Config, ConfigError};
 use harness::reply::{Reply, ReplyError};
-use harness::request::{Request, RequestError, Role};
+use harness::message::Message;
+use harness::request::{Request, RequestError};
 
 fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
     let owned: Vec<(String, String)> = pairs
@@ -143,12 +144,13 @@ fn a_request_carries_the_system_prompt_then_the_task() {
     let request = Request::new("m", "be brief", "reply with the word ok").unwrap();
 
     assert_eq!(request.model(), "m");
-    let messages = request.messages();
-    assert_eq!(messages.len(), 2);
-    assert_eq!(messages[0].role, Role::System);
-    assert_eq!(messages[0].content, "be brief");
-    assert_eq!(messages[1].role, Role::User);
-    assert_eq!(messages[1].content, "reply with the word ok");
+    assert_eq!(
+        request.messages(),
+        [
+            Message::system("be brief"),
+            Message::user("reply with the word ok"),
+        ]
+    );
 }
 
 #[test]
@@ -160,13 +162,7 @@ fn an_empty_task_is_refused_rather_than_sent() {
 #[test]
 fn the_task_is_trimmed() {
     let request = Request::new("m", "s", "  hello  ").unwrap();
-    assert_eq!(request.messages()[1].content, "hello");
-}
-
-#[test]
-fn roles_render_as_the_provider_expects() {
-    assert_eq!(serde_json::to_string(&Role::System).unwrap(), "\"system\"");
-    assert_eq!(serde_json::to_string(&Role::User).unwrap(), "\"user\"");
+    assert_eq!(request.messages()[1], Message::user("hello"));
 }
 
 // -- reply: text plus token counts, and nothing else ----------------------
@@ -182,7 +178,7 @@ const GOOD: &str = r#"{
 #[test]
 fn a_reply_carries_the_text_and_the_two_counts() {
     let reply = Reply::from_json(GOOD).unwrap();
-    assert_eq!(reply.text(), "ok");
+    assert_eq!(reply.text(), Some("ok"));
     assert_eq!(reply.usage().input(), 27);
     assert_eq!(reply.usage().output(), 1);
 }
@@ -207,13 +203,10 @@ fn a_reply_with_no_choices_is_refused() {
 }
 
 #[test]
-fn a_reply_with_no_content_is_refused() {
-    let no_content = r#"{"choices":[{"message":{}}],
-                        "usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
-    assert_eq!(
-        Reply::from_json(no_content).unwrap_err(),
-        ReplyError::NoContent
-    );
+fn a_reply_with_neither_text_nor_calls_is_refused() {
+    let empty = r#"{"choices":[{"message":{}}],
+                    "usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
+    assert_eq!(Reply::from_json(empty).unwrap_err(), ReplyError::Empty);
 }
 
 #[test]
