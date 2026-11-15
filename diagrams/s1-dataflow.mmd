@@ -1,0 +1,35 @@
+flowchart TB
+    ENV["env / .env<br/>LLM_BASE_URL · LLM_API_KEY · LLM_MODEL"]:::source
+    ARGV["argv<br/>task text"]:::source
+
+    CFG["Config<br/>base_url · api_key · model"]:::pure
+    REQ["Request<br/>model · [system, user]"]:::pure
+
+    ADAPT["client — the adapter<br/>temperature 0 · User-Agent<br/>session header"]:::adapter
+
+    BODY["JSON body<br/>bytes"]:::wire
+    HTTP{{"POST base/chat/completions<br/>Authorization: Bearer key"}}:::boundary
+    RESP["JSON response<br/>bytes"]:::wire
+    REP["Reply<br/>text · usage{in, out}"]:::pure
+
+    OUT["stdout<br/>answer · tokens"]:::sink
+    ERR["stderr<br/>exit 1"]:::sink
+
+    ENV --> CFG
+    CFG -- "model" --> REQ
+    CFG -- "endpoint · key" --> ADAPT
+    ARGV --> REQ
+    REQ -- "what to ask" --> ADAPT
+    ADAPT --> BODY --> HTTP --> RESP --> REP --> OUT
+
+    CFG -. "var missing · bad URL" .-> ERR
+    REQ -. "empty task" .-> ERR
+    HTTP -. "network · non-200" .-> ERR
+    RESP -. "not JSON · no usage" .-> ERR
+
+    classDef source fill:#ECEFF1,stroke:#90A4AE,color:#37474F
+    classDef pure fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
+    classDef adapter fill:#EDE7F6,stroke:#5E35B1,color:#311B92
+    classDef boundary fill:#FFF8E1,stroke:#F9A825,color:#8D6E00
+    classDef wire fill:#E3F2FD,stroke:#1565C0,color:#0D47A1
+    classDef sink fill:#F5F5F5,stroke:#757575,color:#212121

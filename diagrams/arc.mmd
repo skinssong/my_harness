@@ -1,0 +1,16 @@
+flowchart TB
+    S1["S1 · one call"] -- "one call cannot act on<br/>what it learns" --> S2["S2 · act and loop"]
+    S2 -- "no record, so no<br/>way to inspect" --> S3["S3 · record and replay"]
+    S3 -- "history outgrows<br/>the window" --> S4["S4 · fit the window"]
+    S4 -- "tools can delete<br/>or overwrite" --> S5["S5 · bound the blast radius"]
+    S5 -- "compaction forgets blindly;<br/>procedures must be carried" --> S6["S6 · compose"]
+    S6 -- "a new tool means<br/>a rebuild" --> S7["S7 · extend without rebuild"]
+
+    E["eval rig<br/>task suite · grader · baseline"]:::track
+    S3 -. "needs a record<br/>to grade" .-> E
+
+    classDef built fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
+    classDef later fill:#ECEFF1,stroke:#90A4AE,color:#37474F
+    classDef track fill:#FFFFFF,stroke:#5E35B1,color:#311B92,stroke-dasharray: 4 3
+    class S1,S2,S3 built
+    class S4,S5,S6,S7 later
