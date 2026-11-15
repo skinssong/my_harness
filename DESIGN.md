@@ -116,7 +116,7 @@ pub enum Message {
 
 **Usage accumulates.** S1 reports one call's price; S2 reports a run's, summed over every call the loop makes.
 
-Three files change: `request.rs` (`Message` becomes an enum and absorbs `Role`), `reply.rs` (carries calls; `NoContent` narrows to "neither text nor calls"), and a new tool module for the contract and the chokepoint. `config.rs`, the transport in `client.rs` and the shape of `main.rs` do not.
+Three files change: `request.rs` (`Message` becomes an enum and absorbs `Role`), `reply.rs` (carries calls; `NoContent` becomes `Empty`, meaning neither text nor calls), and a new tool module for the contract and the chokepoint. `config.rs`, the transport in `client.rs` and the shape of `main.rs` do not.
 
 ![S2: tools and the loop](diagrams/s2-tools.svg)
 

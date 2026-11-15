@@ -137,6 +137,24 @@ fn the_report_for_a_calling_reply_names_what_it_asked_for() {
     assert!(report.contains("read_file"), "report was: {report}");
 }
 
+#[test]
+fn the_parser_never_yields_a_calling_reply_without_calls() {
+    // Calling is the only variant a loop must act on, so this is the property
+    // the loop relies on rather than the type alone.
+    let text_only = r#"{"choices":[{"message":{"content":"hi","tool_calls":[]}}],
+                        "usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
+    let reply = Reply::from_json(text_only).unwrap();
+    assert!(reply.is_answer(), "empty call list must fall through to Answer");
+
+    let one_call = CALLING.replace("\"content\": null", "\"content\": \"let me look\"");
+    let reply = Reply::from_json(&one_call).unwrap();
+    assert!(!reply.is_answer());
+    assert!(
+        !reply.calls().is_empty(),
+        "a Calling reply from the parser always carries work"
+    );
+}
+
 // -- carrying a conversation ----------------------------------------------
 
 #[test]

@@ -123,6 +123,10 @@ impl Reply {
         }
     }
 
+    /// True when the reply ends the run. Prefer inspecting `calls()` in a
+    /// loop: `from_json` never yields a `Calling` with an empty call list, but
+    /// the variant is writable by hand, and a loop that trusted `is_answer` for
+    /// its stopping rule could spin on one.
     pub fn is_answer(&self) -> bool {
         matches!(self, Self::Answer { .. })
     }

@@ -1,8 +1,12 @@
 //! One message on the wire.
 //!
 //! A single `role` field hides four different shapes. Modelling them as an
-//! enum means a message that is neither text nor a call cannot be constructed,
-//! and the assistant's call list is present exactly when the variant says so.
+//! enum keeps the assistant's call list present exactly when the variant says
+//! so, and the constructors below only produce messages the provider accepts.
+//! Note what that does and does not buy: an enum's variant fields are public,
+//! so `Assistant { content: None, tool_calls: vec![] }` is still writable by
+//! hand. The guarantee is that nothing here builds it, not that it is
+//! unrepresentable — enforcing it would cost a hand-written `Serialize`.
 //!
 //! Only serialisation lives here: every message this crate sends is one it
 //! built itself. Incoming messages are read by `reply.rs`, which keeps its wire
