@@ -122,6 +122,16 @@ Three files change: `request.rs` (`Message` becomes an enum and absorbs `Role`),
 
 *Source: [diagrams/s2-tools.mmd](diagrams/s2-tools.mmd)*
 
+**Built** *(2026-11-16)*. The contract, the four tools, the chokepoint and the loop, plus the registry edge into the client that the diagram now shows. Where the implementation departs from the paragraphs above:
+
+- the ceiling defaults to **8 model calls** (`--max-turns N`), and the workspace defaults to the current directory (`--workspace DIR`)
+- arguments are validated by deserialising into the tool's `Args`, so a shape mismatch is an observation in the same way bad JSON is — one rule, not two
+- an observation is shaped to **8 KiB**, head and tail kept with the elided count stated; the full text never leaves the tool, which is what makes S3's "keep results whole" a record concern rather than a memory one
+- **`bash` is not sandboxed.** `read_file`, `write_file` and `list_dir` resolve paths lexically and refuse `..` and absolute paths, but a shell can leave the root. Bounding it is S5's job
+- **no retries.** A transport failure still ends the run; retry policy needs the budget S3 introduces
+
+Live evidence: the model created `greeting.txt`, read it back and answered in three turns (2,532 in · 113 out), and `--max-turns 1` halted after one call with the spend reported.
+
 ---
 
 ## S3 — explain and reproduce any run, offline
@@ -210,8 +220,9 @@ Cheap now, expensive later.
 
 ## Toolchain
 
-- Installed: rustc/cargo 1.77.2 (March 2024) plus nightly. Run `rustup update stable` first; pin `edition = "2021"`, since edition 2024 needs 1.85.
-- The directory is not currently a git repository; `git init` here when code begins.
+- Toolchain in use: **rustc 1.100.0**, `edition = "2021"`.
+- Dependencies, all of them: `tokio` (runtime, process, fs, time), `reqwest` (rustls, so no OpenSSL), `serde`/`serde_json`, `thiserror`, `dotenvy`, and — added at S2 — `schemars` for schemas derived from types, and `async-trait` so one registry can hold unlike tools.
+- The crate is its own git repository; S1 and S2 are committed.
 
 ## Model access
 
@@ -221,8 +232,8 @@ Tool-calling quality is model-dependent. A weak model produces malformed calls, 
 
 ## Verification, per phase
 
-- **S1:** one prompt, one reply, tokens reported, exit 0.
-- **S2:** a file round trip in three turns; a forced one-turn ceiling halts cleanly; a megabyte of command output is elided, not sent; a tool-calling reply with `content: null` is accepted; a malformed `arguments` string comes back as an observation rather than an abort.
+- **S1:** one prompt, one reply, tokens reported, exit 0. *Met live: `ok`, 44 in · 13 out.*
+- **S2:** a file round trip in three turns; a forced one-turn ceiling halts cleanly; a megabyte of command output is elided, not sent; a tool-calling reply with `content: null` is accepted; a malformed `arguments` string comes back as an observation rather than an abort. *Met: the round trip and the ceiling live; the rest by test — a 20 KB observation arrives under 5 KB on the wire.*
 - **S3:** replay a recorded run with the network down; transcript and spend identical.
 
 Unit tests target the pure parts — the reducer, the decision function, the stuck detector, shaping — with no network and no key.

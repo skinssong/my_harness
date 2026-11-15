@@ -18,6 +18,7 @@ flowchart TB
     PARSE -- "tool call" --> DISP --> REG --> WORLD
     REG --> SHAPE --> HIST
     HIST -- "next request" --> CLIENT
+    REG -. "tools · what it may call" .-> CLIENT
     CEIL -. "halts the loop" .-> OUT
 
     classDef grey fill:#ECEFF1,stroke:#90A4AE,color:#37474F
