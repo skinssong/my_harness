@@ -82,6 +82,42 @@ The same path as data, showing where the domain stops and the adapter begins:
 
 **Two seams that cost nothing now.** One chokepoint for every action, and results kept whole with a shaped copy sent. S5 and S4 attach to those instead of rewriting tools and record formats. Drawing the seams is not forward-looking scaffolding; it is the difference between a dispatcher and four tools each doing their own thing.
 
+### What the wire forces — amended after walking a read-file exchange
+
+S1's types assumed a conversation made of plain text. A tool turn is not that. Four shapes travel under one `role` field:
+
+| Message | Fields present |
+|---|---|
+| `system` | `content` |
+| `user` | `content` |
+| `assistant`, when calling | `content: null`, `tool_calls: [...]` |
+| `tool` | `content`, `tool_call_id`, `name` |
+
+So `Message` becomes an enum, and the impossible state — an assistant message with neither text nor calls — stops being representable:
+
+```rust
+pub enum Message {
+    System(String),
+    User(String),
+    Assistant { text: Option<String>, calls: Vec<ToolCall> },
+    Tool { call_id: String, name: String, content: String },
+}
+```
+
+**`Reply` must stop requiring text.** S1 rejects a reply with no `content`, which is correct when every reply is an answer and wrong here: a tool-calling reply carries `"content": null`. Left alone, that check turns every tool turn into `NoContent` and the loop never starts. The rule becomes **text or calls, never neither**, and `Reply` gains `calls: Vec<ToolCall>`.
+
+**Two parse boundaries, not one.** The body is parsed once where it enters. Each `tool_call.function.arguments` is then a *string containing JSON*, parsed a second time into that tool's argument type. Only the first parse is fatal — it means the provider broke its own contract. A failure at the second becomes an observation the model can correct (`tool_error: arguments are not valid JSON: …`), because a malformed call is a behaviour to recover from, not a reason to abort a run.
+
+**A turn may carry several calls.** One model call can return N calls; each yields its own `role: "tool"` message keyed by `tool_call_id`, then a single further call. The id is the only thing linking a result to its question.
+
+**The loop decides on "are there calls?", not on `finish_reason`.** Providers disagree on that field's value when calls are present; presence of calls is what the message says.
+
+**The turn ceiling counts model calls**, not tool executions — otherwise a batch of four calls consumes four turns and the ceiling stops meaning what it says.
+
+**Usage accumulates.** S1 reports one call's price; S2 reports a run's, summed over every call the loop makes.
+
+Three files change: `request.rs` (`Message` becomes an enum and absorbs `Role`), `reply.rs` (carries calls; `NoContent` narrows to "neither text nor calls"), and a new tool module for the contract and the chokepoint. `config.rs`, the transport in `client.rs` and the shape of `main.rs` do not.
+
 ![S2: tools and the loop](diagrams/s2-tools.svg)
 
 *Source: [diagrams/s2-tools.mmd](diagrams/s2-tools.mmd)*
@@ -186,7 +222,7 @@ Tool-calling quality is model-dependent. A weak model produces malformed calls, 
 ## Verification, per phase
 
 - **S1:** one prompt, one reply, tokens reported, exit 0.
-- **S2:** a file round trip in three turns; a forced one-turn ceiling halts cleanly; a megabyte of command output is elided, not sent.
+- **S2:** a file round trip in three turns; a forced one-turn ceiling halts cleanly; a megabyte of command output is elided, not sent; a tool-calling reply with `content: null` is accepted; a malformed `arguments` string comes back as an observation rather than an abort.
 - **S3:** replay a recorded run with the network down; transcript and spend identical.
 
 Unit tests target the pure parts — the reducer, the decision function, the stuck detector, shaping — with no network and no key.
