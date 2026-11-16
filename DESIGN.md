@@ -132,6 +132,25 @@ Three files change: `request.rs` (`Message` becomes an enum and absorbs `Role`),
 
 Live evidence: the model created `greeting.txt`, read it back and answered in three turns (2,532 in · 113 out), and `--max-turns 1` halted after one call with the spend reported.
 
+### Structs, and what crosses between them
+
+Boxes act; every arrow is labelled with the value that crosses it. `main` builds a `Config` and the tools array once, hands a `Request` and `Limits` to the loop, and prints the `Outcome`. The loop sends a `Request` per turn, receives a `Reply`, and either stops or turns that reply's `ToolCall` into an `Observation` by way of the registry.
+
+![Structs and the values between them](diagrams/structs.svg)
+
+*Source: [diagrams/structs.mmd](diagrams/structs.mmd)*
+
+| Actor | Acts by |
+|---|---|
+| `main` | parsing argv, assembling the pieces, printing |
+| `agent::run` | deciding the next step, and when to stop |
+| `Client` | one HTTP POST |
+| `Registry` | finding, validating and running a call |
+| the four tools | touching the filesystem and the shell |
+| the provider | not ours |
+
+Two carriers are worth a second look. `Reply` is data, but its variant is what the loop branches on — an enum doing control's job. `Observation.ok` is the reverse: the loop never reads it, only the model does, which is why a failed tool cannot stop a run by accident.
+
 ---
 
 ## S3 — explain and reproduce any run, offline
