@@ -144,3 +144,73 @@ async fn a_run_is_recorded_and_replays_with_no_credentials_at_all() {
     );
     assert!(replayed_stdout.contains("27 in"), "stdout: {replayed_stdout}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_record_defaults_outside_the_workspace() {
+    let (addr, _seen) = serve_many(vec![response("200 OK", BODY)]).await;
+    let home = TempWorkspace::new("home");
+    let work = TempWorkspace::new("work");
+
+    let output = tokio::process::Command::new(BIN)
+        .args(["--workspace", work.path.to_str().unwrap(), "say", "ok"])
+        .env("HOME", home.path.to_str().unwrap())
+        .env("LLM_BASE_URL", format!("http://{addr}/v1"))
+        .env("LLM_API_KEY", "k")
+        .env("LLM_MODEL", "m")
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let record = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("record "))
+        .expect("the run prints its record path");
+
+    assert!(
+        record.starts_with(home.path.to_str().unwrap()),
+        "the record went to {record}, which is not under HOME"
+    );
+    assert!(
+        !record.starts_with(work.path.to_str().unwrap()),
+        "the record must not be inside the workspace: {record}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("warning"),
+        "a default placement should not warn"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_record_inside_the_workspace_is_warned_about() {
+    let (addr, _seen) = serve_many(vec![response("200 OK", BODY)]).await;
+    let work = TempWorkspace::new("work-warn");
+
+    let output = tokio::process::Command::new(BIN)
+        .args([
+            "--workspace",
+            work.path.to_str().unwrap(),
+            "--log",
+            work.path.join("runs").to_str().unwrap(),
+            "say",
+            "ok",
+        ])
+        .env("LLM_BASE_URL", format!("http://{addr}/v1"))
+        .env("LLM_API_KEY", "k")
+        .env("LLM_MODEL", "m")
+        .output()
+        .await
+        .unwrap();
+
+    assert!(output.status.success(), "the run still works");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("the record is inside the workspace"),
+        "stderr: {stderr}"
+    );
+}

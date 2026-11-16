@@ -26,9 +26,12 @@ const USAGE: &str = "usage: harness [--max-turns N] [--workspace DIR] [--log DIR
 
 Asks one model one task. The model may list, read, write and run commands in the
 workspace, for up to N model calls (default 8). Every run is recorded under DIR
-(default .harness/runs); replay re-derives a recorded run without calling
+(default ~/.harness/runs, deliberately outside the workspace); replay re-derives a recorded run without calling
 anything.
 
+  --log DIR        where runs are recorded (default ~/.harness/runs; a
+                   directory inside the workspace lets the model rewrite its
+                   own record, which is warned about)
   --max-usd X      stop once the run has cost more than X dollars; needs
                    LLM_PRICE_IN and LLM_PRICE_OUT (dollars per million tokens)
   --stuck-after N  stop when the same call produces the same result N times
@@ -82,7 +85,7 @@ fn parse(args: &[String]) -> Result<Command, String> {
     }
 
     let mut workspace = PathBuf::from(".");
-    let mut log_dir = PathBuf::from(".harness/runs");
+    let mut log_dir = default_log_dir();
     let mut max_turns = Limits::default().max_turns;
     let mut max_usd = None;
     let mut stuck_after = Limits::default().stuck_after;
@@ -146,6 +149,29 @@ fn parse(args: &[String]) -> Result<Command, String> {
     }))
 }
 
+/// The record lives outside the workspace by default, because a record the
+/// agent can reach is not an audit trail: `write_file` and `bash` would both
+/// reach `.harness/runs` if it sat next to the files being worked on.
+fn default_log_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|home| PathBuf::from(home).join(".harness").join("runs"))
+        .unwrap_or_else(|| PathBuf::from(".harness/runs"))
+}
+
+/// Warn when the record is somewhere the tools can reach it.
+fn warn_if_record_is_reachable(record: &std::path::Path, workspace: &Workspace) {
+    let Some(dir) = record.parent().and_then(|dir| dir.canonicalize().ok()) else {
+        return;
+    };
+    if dir.starts_with(workspace.root()) {
+        eprintln!(
+            "warning: the record is inside the workspace ({}); the model can read and rewrite it",
+            dir.display()
+        );
+    }
+}
+
 async fn run(options: &Options) -> Result<(), String> {
     let config = Config::from_env().map_err(|err| err.to_string())?;
     let request =
@@ -165,6 +191,7 @@ async fn run(options: &Options) -> Result<(), String> {
 
     let mut log = Log::create(&options.log_dir).map_err(|err| err.to_string())?;
     let record = log.path().to_path_buf();
+    warn_if_record_is_reachable(&record, &workspace);
 
     let limits = Limits {
         max_turns: options.max_turns,

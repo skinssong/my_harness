@@ -38,7 +38,7 @@ tokens 2532 in · 113 out · 2645 total · 3 turn(s)
 | `--max-turns N` | model calls allowed before stopping (default 8) |
 | `--max-usd X` | stop once the run has cost more than X (needs the prices above) |
 | `--stuck-after N` | stop when the same call and result repeat N times (default 3, 0 off) |
-| `--log DIR` | where runs are recorded (default `.harness/runs`) |
+| `--log DIR` | where runs are recorded (default `~/.harness/runs`) |
 
 ## What it can do
 
@@ -62,11 +62,11 @@ $ cargo run -- "create a.txt containing 'hi', then read it back"
 a.txt created and reads: `hi`
 
 tokens 2605 in · 142 out · 2747 total · 3 turn(s)
-record .harness/runs/run-1794805969-60059-0.jsonl
+record /Users/you/.harness/runs/run-1794805969-60059-0.jsonl
 ```
 
 ```
-$ cargo run -- replay .harness/runs/run-1794805969-60059-0.jsonl
+$ cargo run -- replay ~/.harness/runs/run-1794805969-60059-0.jsonl
 a.txt created and reads: `hi`
 
 replayed 3 turn(s) · 3 tool result(s) · tokens 2605 in · 142 out · 2747 total
@@ -75,6 +75,10 @@ replayed 3 turn(s) · 3 tool result(s) · tokens 2605 in · 142 out · 2747 tota
 Replay calls nothing: it re-derives each decision from the record and checks the
 recorded effects match, so a change to the loop that alters a decision shows up
 as a mismatch. It needs no provider settings at all.
+
+The record lives outside the workspace on purpose. A directory the tools can
+reach is not an audit trail — `write_file` and `bash` would both reach it. Point
+`--log` inside the workspace and the harness warns rather than stopping you.
 
 ## Layout
 

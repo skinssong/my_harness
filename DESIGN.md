@@ -177,7 +177,7 @@ Three carriers are worth a second look. `Reply` is data, but its variant is what
 
 **Built** *(2026-11-16)*. The record, replay, the money budget and the stuck detector.
 
-- **Record**: one JSON object per line, flushed per event, so a run that dies at turn nine leaves nine turns. The loop takes a `Recorder`, so it never branches on whether it is being kept.
+- **Record**: one JSON object per line, flushed per event, so a run that dies at turn nine leaves nine turns. The loop takes a `Recorder`, so it never branches on whether it is being kept. It lives at `~/.harness/runs` by default — outside the workspace, because a record the tools can reach is not an audit trail; a `--log` inside the workspace is warned about rather than refused.
 - **Replay**: rebuilds each reply from the record, runs it through the same `decide` the live loop uses, and checks the recorded effects match — the right tools, in the right order, ending in the same answer and the same turn count. It calls nothing and touches nothing.
 - **Budget**: `--max-usd`, priced from `LLM_PRICE_IN` and `LLM_PRICE_OUT` (dollars per million tokens, both or neither). Checked *before* acting, so passing the budget does not also run tools.
 - **Stuck**: the same call, arguments and result `--stuck-after` times in a row (default 3, 0 disables) ends the run. Whole turns are compared, so a model alternating between two states is not caught — a known limit.
