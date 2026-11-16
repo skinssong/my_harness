@@ -92,6 +92,7 @@ reach is not an audit trail — `write_file` and `bash` would both reach it. Poi
 | `tool` | the contract, the registry, the chokepoint, observation shaping |
 | `tools/` | `read_file`, `list_dir`, `write_file`, `bash` |
 | `agent` | the loop, its ceiling, the budget and the stuck check |
+| `context` | the projection: what of the conversation goes on the wire |
 | `event` / `log` | what a run records, and the file it records to |
 | `replay` | re-deriving a recorded run |
 | `workspace` | where the tools may look |
@@ -99,7 +100,8 @@ reach is not an audit trail — `write_file` and `bash` would both reach it. Poi
 ## Check it
 
 ```
-cargo test      # 91 tests; the provider is a localhost stub, so no key is needed
+cargo test      # 91 tests, all under tests/; the provider is a localhost
+                # stub, so no key is needed
 cargo clippy --all-targets
 ```
 

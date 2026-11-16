@@ -197,29 +197,3 @@ impl Registry {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shaping_keeps_both_ends_and_says_what_it_dropped() {
-        let observation = Observation::ok("x".repeat(1_000)).shaped(100);
-        assert!(observation.text.starts_with("xxxxxxxxxx"));
-        assert!(observation.text.contains("900 bytes elided"));
-        assert!(observation.text.ends_with("xxxxxxxxxx"));
-    }
-
-    #[test]
-    fn shaping_leaves_a_small_observation_alone() {
-        let observation = Observation::ok("short").shaped(100);
-        assert_eq!(observation.text, "short");
-    }
-
-    #[test]
-    fn a_failure_is_an_observation_not_a_panic() {
-        let observation = Observation::failed("no such file: x");
-        assert!(!observation.ok);
-        assert!(observation.text.starts_with("tool_error: "));
-    }
-}
