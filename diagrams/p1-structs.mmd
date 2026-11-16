@@ -1,0 +1,14 @@
+flowchart LR
+    MAIN["main<br/>builds, prints"]:::added
+    CLIENT["Client<br/>one POST"]:::added
+    PROV["provider"]:::external
+
+    MAIN -->|"Request"| CLIENT
+    CLIENT -->|"Wire"| PROV
+    PROV -->|"bytes"| CLIENT
+    CLIENT -->|"Reply"| MAIN
+
+    classDef existing fill:#ECEFF1,stroke:#90A4AE,color:#37474F
+    classDef added fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
+    classDef changed fill:#FFF3E0,stroke:#EF6C00,color:#E65100
+    classDef external fill:#F5F5F5,stroke:#9E9E9E,color:#424242,stroke-dasharray:4 3

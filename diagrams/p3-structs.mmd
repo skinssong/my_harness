@@ -1,0 +1,29 @@
+flowchart LR
+    MAIN["main<br/>builds, prints"]:::existing
+    LOOP["agent::run<br/>pure decision + driver"]:::changed
+    CLIENT["Client<br/>one POST"]:::existing
+    REG["Registry<br/>finds, validates, runs"]:::existing
+    TOOLS["ReadFile · ListDir<br/>WriteFile · Bash"]:::existing
+    LOG["Log<br/>writes, reads the record"]:::added
+    REPLAY["replay()<br/>re-derives a run"]:::added
+    PROV["provider"]:::external
+
+    MAIN -->|"Request · Limits"| LOOP
+    MAIN -->|"Config · tools"| CLIENT
+    LOOP -->|"Request"| CLIENT
+    CLIENT -->|"Wire"| PROV
+    PROV -->|"bytes"| CLIENT
+    CLIENT -->|"Reply"| LOOP
+    LOOP -->|"ToolCall"| REG
+    REG -->|"Args<br/>&amp;Workspace"| TOOLS
+    TOOLS -->|"Observation"| REG
+    REG -->|"Observation, shaped"| LOOP
+    LOOP -->|"Outcome"| MAIN
+    LOOP -->|"Event"| LOG
+    LOG -->|"Vec&lt;Event&gt;"| REPLAY
+    REPLAY -. "decide()" .-> LOOP
+
+    classDef existing fill:#ECEFF1,stroke:#90A4AE,color:#37474F
+    classDef added fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
+    classDef changed fill:#FFF3E0,stroke:#EF6C00,color:#E65100
+    classDef external fill:#F5F5F5,stroke:#9E9E9E,color:#424242,stroke-dasharray:4 3

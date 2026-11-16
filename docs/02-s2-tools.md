@@ -49,9 +49,13 @@ pub enum Message {
 
 Three files change: `request.rs` (`Message` becomes an enum and absorbs `Role`), `reply.rs` (carries calls; `NoContent` becomes `Empty`, meaning neither text nor calls), and a new tool module for the contract and the chokepoint. `config.rs`, the transport in `client.rs` and the shape of `main.rs` do not.
 
-![S2: tools and the loop](../diagrams/s2-tools.svg)
+## The system at this phase
 
-*Source: [diagrams/s2-tools.mmd](../diagrams/s2-tools.mmd)*
+![S2: the whole system](../diagrams/p2-structs.svg)
+
+*Source: [diagrams/p2-structs.mmd](../diagrams/p2-structs.mmd). Grey is built and unchanged; green is new in this phase; amber is an existing block whose shape changed; a red dotted edge is a connection the phase removes.*
+
+Grey is S1 unchanged. Green adds the loop, the registry and the four tools: `main` now hands a `Request` and `Limits` to `agent::run`, which sends one `Request` per turn and turns each `ToolCall` into an `Observation` by way of the registry — the single chokepoint every action passes through.
 
 **Built** *(2026-11-16)*. The contract, the four tools, the chokepoint and the loop, plus the registry edge into the client that the diagram now shows. Where the implementation departs from the paragraphs above:
 

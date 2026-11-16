@@ -8,6 +8,14 @@
 
 **Why.** The tools write files and run a shell. Once the loop is reliable enough to leave running — which S3's record and budget made possible — the risk moves from correctness to blast radius. A turn ceiling and a money budget bound how long and how much; neither bounds what.
 
+## The system at this phase
+
+![S5: the whole system](../diagrams/p5-structs.svg)
+
+*Source: [diagrams/p5-structs.mmd](../diagrams/p5-structs.mmd). Grey is built and unchanged; green is new in this phase; amber is an existing block whose shape changed; a red dotted edge is a connection the phase removes.*
+
+Grey is S1–S4 unchanged. **Amber** marks the two blocks that change shape: `agent::run` gains a stop-mid-run path, so it can hand back a suspension instead of only an answer or an error, and `Registry` gains the policy check — placed there because S2 insisted every action passes through one chokepoint, and a check anywhere else would be a check some call could miss. Green adds `resume()`, which reads a suspended record and continues it live. Nothing is removed, so there is no red.
+
 ## The exchange, walked through
 
 Default policy: **allow** `read_file`, `list_dir`; **ask** `write_file`, `bash`; anything unlisted is **deny**. Task: *"summarise team-notes.txt into report.txt"*.

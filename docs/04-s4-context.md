@@ -61,13 +61,15 @@ assistant → read_file {log}           assistant → read_file {log}
 
 **Estimating size.** `bytes / 4` plus the fixed cost, with no tokenizer dependency. The decision it drives is coarse — mask or don't — and a tokenizer would buy precision the threshold does not need. If it ever drives a hard limit, that changes.
 
-## Where it sits in the system
+## The system at this phase
 
-The [struct diagram](../DESIGN.md#structs-and-what-crosses-between-them) gains one node and splits one edge; nothing else moves.
+![S4: the whole system](../diagrams/p4-structs.svg)
 
-```
-agent::run ──"Request, full"──▶ project() ──"Request, masked"──▶ Client
-```
+*Source: [diagrams/p4-structs.mmd](../diagrams/p4-structs.mmd). Grey is built and unchanged; green is new in this phase; amber is an existing block whose shape changed; a red dotted edge is a connection the phase removes.*
+
+Grey is S1–S3 unchanged, and that is the phase's whole claim: the record has to be untouched for replay to keep working, and nothing here reaches it. Green adds `project()`, inserted on the loop's path to the client. The **red dotted** edge is the connection it removes — the loop no longer sends its `Request` straight to `Client`; what leaves is a projection of what was built, and the difference is decided in one pure function, which is why nothing else has to move.
+
+Three things do not become nodes:
 
 | What | Kind | Why it does — or does not — become a node |
 |---|---|---|
@@ -75,7 +77,7 @@ agent::run ──"Request, full"──▶ project() ──"Request, masked"─�
 | `ContextPolicy` | carrier | rides in `Limits`, which already flows `main → agent::run`; a second edge would make it look like an independent input |
 | the mask marker | carrier | text inside an existing `Message`; a type for a string buys nothing |
 
-In the diagram `project()` is drawn in outline, because it is designed and not built. `Log` still receives whole events and `replay()` still reads the record, so masking is invisible to both — which is this phase's own claim made visible: the record is the truth, and the prompt is a projection of it.
+`Log` still receives whole events and `replay()` still reads the record, so masking is invisible to both. The record is the truth, and the prompt is a projection of it.
 
 ## What it does not do
 

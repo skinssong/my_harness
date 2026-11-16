@@ -14,9 +14,13 @@
 
 **Where the envelope lives.** `Request` says what is asked; the adapter says how to say it — field names, the temperature constant, and whatever headers a gateway demands to be talked to at all. Provider quirks stay out of the domain, which is why `Request` has no `body()` and the wire shape is private to the client.
 
-![S1: one call](../diagrams/s1-call.svg)
+## The system at this phase
 
-*Source: [diagrams/s1-call.mmd](../diagrams/s1-call.mmd)*
+![S1: the whole system](../diagrams/p1-structs.svg)
+
+*Source: [diagrams/p1-structs.mmd](../diagrams/p1-structs.mmd). Grey is built and unchanged; green is new in this phase; amber is an existing block whose shape changed; a red dotted edge is a connection the phase removes.*
+
+All of it is green, because all of it is new: `main` parses, builds and prints, the `Client` owns the one POST, and the provider is the only box that is not ours.
 
 The same path as data, showing where the domain stops and the adapter begins:
 

@@ -16,11 +16,11 @@ Each phase is one **functional requirement** — a capability the harness lacked
 
 The eval rig is drawn beside the spine rather than on it: it is required by the deliverable, not forced by the phase before it.
 
-Diagrams are cumulative. **Grey** blocks were built in an earlier phase and are unchanged; **green** blocks are new in this phase; **amber** marks an existing block whose *shape* changes.
+Diagrams are cumulative. **Grey** blocks were built in an earlier phase and are unchanged; **green** blocks are new in this phase; **amber** marks an existing block whose *shape* changes; a **red dotted** edge is a connection the phase removes.
 
-Every phase has its own document. S1–S3 are built and carry diagrams of what exists; S4 and S5 are designed with a worked data flow but no code; S6 and S7 are open, with their blocks deliberately undesigned.
+Every phase has its own document, and every phase document carries the whole system drawn at that phase — directly on top of the one before it, so the difference *is* the phase. S1–S3 are built; S4 and S5 are designed with a worked data flow but no code; S6 and S7 are open, with their blocks deliberately undesigned.
 
-Every diagram carries an explicit pixel size, applied by [`diagrams/size.py`](diagrams/size.py) after rendering: mermaid otherwise leaves the size to the container, which draws small in a narrow column. Re-rendering resets it, so run the script again afterwards; any `.svg` opens at full size on its own.
+Every diagram is rendered from its `.mmd` source by [`diagrams/build.sh`](diagrams/build.sh), which then applies [`diagrams/size.py`](diagrams/size.py): mermaid otherwise leaves the size to the container, which draws small in a narrow column. Edit the source, run the script, and the SVG matches what was drawn. Any `.svg` also opens at full size on its own.
 
 **Three phases are amber.** S3 extracts the loop's decisions so they can be replayed; S5 adds suspension to the driver; S6 makes it re-entrant. Each is a small, local change — but a change, and marking it is the honest drawing.
 
@@ -67,13 +67,19 @@ Each phase has one document: the requirement, why the previous phase could not m
 
 Boxes act; every arrow is labelled with the value that crosses it. `main` builds a `Config` and the tools array once, hands a `Request` and `Limits` to the loop, and prints the `Outcome`. The loop sends a `Request` per turn, receives a `Reply`, and either stops or turns that reply's `ToolCall` into an `Observation` by way of the registry.
 
-`project()` is drawn in outline because it is designed and not built. S4 inserts it on the loop's path to the client: the request that leaves is not the request that was built, and the difference is decided in one pure function — which is why it can be added without moving anything else. The record still receives full events, so `Log` and `replay()` are untouched by masking.
+The drawing is cumulative, and it lives in the phase documents — one per phase, each built on the one before it:
 
-Grey is what S1 and S2 built; green is what S3 added. The loop hands every turn to `Log` as an `Event`, and `replay()` gets the file back as a `Vec<Event>` and judges each recorded reply with the same `decide()` the live loop uses — the dashed edge. It borrows the loop's judgement without running the loop, which is why replay can catch a change in behaviour rather than merely reprint a transcript.
+| Phase | The system at that phase |
+|---|---|
+| S1 | [one call](docs/01-s1-call.md#the-system-at-this-phase) |
+| S2 | [the loop and the tools](docs/02-s2-tools.md#the-system-at-this-phase) |
+| S3 | [the record and replay](docs/03-s3-record.md#the-system-at-this-phase) |
+| S4 | [projection](docs/04-s4-context.md#the-system-at-this-phase) |
+| S5 | [permissions and suspension](docs/05-s5-permissions.md#the-system-at-this-phase) |
 
-![Structs and the values between them](diagrams/structs.svg)
+Read any one on its own: grey is what earlier phases built, green is what that phase adds, amber is an existing block whose shape changes, red dotted is a connection it removes. No phase is a redraw.
 
-*Source: [diagrams/structs.mmd](diagrams/structs.mmd)*
+S4 and S5 are designed rather than built, so their green and amber describe intent, not a commit. `project()` is green in S4 and grey in S5 for the same reason it is grey here: by then it is part of the system the later phase builds on.
 
 | Actor | Acts by |
 |---|---|
@@ -84,6 +90,7 @@ Grey is what S1 and S2 built; green is what S3 added. The loop hands every turn 
 | the four tools | touching the filesystem and the shell |
 | `Log` | appending events, and reading them back |
 | `replay()` | re-deriving decisions, calling nothing |
+| `resume()` | continuing a suspended run, live |
 | the provider | not ours |
 
 Three carriers are worth a second look. `Reply` is data, but its variant is what the loop branches on — an enum doing control's job. `Observation.ok` is the reverse: the loop never reads it, only the model does, which is why a failed tool cannot stop a run by accident. And `Limits` started as two numbers and now carries the prices as well, because a money budget is meaningless without a rate to convert tokens into dollars — a carrier that grew a second purpose rather than gaining a sibling.

@@ -6,6 +6,8 @@
 
 S1–S5 were designed one at a time, each forced by something the phase before could not do. These two are recorded as requirements only: their building blocks are not designed, because writing them down now would be fiction — I would be inventing shapes for problems I have not yet met.
 
+For the same reason the cumulative system diagram stops at [S5](05-s5-permissions.md): a phase that has no blocks has nothing to draw green.
+
 ## S6 — compose
 
 **Requirement.** Sub-tasks run without contaminating the main context, reusable procedures load on demand, and a task suite can be run and graded.

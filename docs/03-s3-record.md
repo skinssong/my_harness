@@ -12,9 +12,13 @@
 
 **This is the first amber phase.** Replay requires the loop's decisions to be available without performing them, so the S2 loop body splits into a pure "what next" and an async "do it". Localised, but not free.
 
-![S3: record and replay](../diagrams/s3-record.svg)
+## The system at this phase
 
-*Source: [diagrams/s3-record.mmd](../diagrams/s3-record.mmd)*
+![S3: the whole system](../diagrams/p3-structs.svg)
+
+*Source: [diagrams/p3-structs.mmd](../diagrams/p3-structs.mmd). Grey is built and unchanged; green is new in this phase; amber is an existing block whose shape changed; a red dotted edge is a connection the phase removes.*
+
+Grey is S1 and S2 unchanged. Green adds `Log` and `replay()`. Amber is `agent::run`, which keeps its job but changes shape: the S2 loop body splits into a pure `decide()` and an async driver, so a recorded reply can be judged without being performed. The **plain dotted** edge is that borrow — `replay()` calls the loop's judgement, not the loop. Red dotted is reserved for an edge a phase removes; none is removed here.
 
 **Done looks like:** a task runs, the log is noted, the network is disconnected, the log replays to an identical transcript and identical spend; then `inspect` shows the turn where it went wrong.
 
