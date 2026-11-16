@@ -42,7 +42,8 @@ impl From<&LoggedCall> for ToolCall {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// Not `Eq`: a budget is a float.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
     /// Everything needed to describe the run without the environment.
@@ -51,6 +52,11 @@ pub enum Event {
         system: String,
         task: String,
         max_turns: u32,
+        /// Defaulted so a record written before these limits existed still reads.
+        #[serde(default)]
+        stuck_after: u32,
+        #[serde(default)]
+        max_usd: Option<f64>,
     },
     /// What the model said, and what it cost.
     Reply {

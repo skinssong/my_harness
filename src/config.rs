@@ -9,6 +9,8 @@ use reqwest::Url;
 use thiserror::Error;
 
 pub const BASE_URL_VAR: &str = "LLM_BASE_URL";
+pub const PRICE_IN_VAR: &str = "LLM_PRICE_IN";
+pub const PRICE_OUT_VAR: &str = "LLM_PRICE_OUT";
 pub const API_KEY_VAR: &str = "LLM_API_KEY";
 pub const MODEL_VAR: &str = "LLM_MODEL";
 
@@ -20,6 +22,26 @@ pub enum ConfigError {
     Missing(&'static str),
     #[error("LLM_BASE_URL is not an http(s) URL: {0}")]
     BadBaseUrl(String),
+    #[error("{0} is set but {1} is not; a price needs both halves")]
+    IncompletePrices(&'static str, &'static str),
+    #[error("{0} is not a number: {1}")]
+    BadPrice(&'static str, String),
+}
+
+/// US dollars per million tokens. Optional: without it a run still works, it
+/// simply cannot be given a money budget.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Prices {
+    pub input_per_mtok: f64,
+    pub output_per_mtok: f64,
+}
+
+impl Prices {
+    pub fn cost(&self, input_tokens: u32, output_tokens: u32) -> f64 {
+        (f64::from(input_tokens) * self.input_per_mtok
+            + f64::from(output_tokens) * self.output_per_mtok)
+            / 1_000_000.0
+    }
 }
 
 /// A base URL that has been parsed once. The user's text is kept verbatim
@@ -51,6 +73,7 @@ pub struct Config {
     base_url: BaseUrl,
     api_key: String,
     model: String,
+    prices: Option<Prices>,
 }
 
 // Written by hand so a key cannot reach a log through `{:?}`. Everything that
@@ -61,6 +84,7 @@ impl std::fmt::Debug for Config {
             .field("base_url", &self.base_url.0)
             .field("api_key", &"<redacted>")
             .field("model", &self.model)
+            .field("prices", &self.prices)
             .finish()
     }
 }
@@ -76,6 +100,7 @@ impl Config {
             base_url,
             api_key: required(&get, API_KEY_VAR)?,
             model: required(&get, MODEL_VAR)?,
+            prices: prices(&get)?,
         })
     }
 
@@ -94,6 +119,10 @@ impl Config {
     pub fn endpoint(&self) -> String {
         self.base_url.endpoint()
     }
+
+    pub fn prices(&self) -> Option<Prices> {
+        self.prices
+    }
 }
 
 fn required(get: &impl Fn(&str) -> Option<String>, name: &'static str) -> Result<String, ConfigError> {
@@ -101,4 +130,25 @@ fn required(get: &impl Fn(&str) -> Option<String>, name: &'static str) -> Result
         Some(value) if !value.is_empty() => Ok(value),
         _ => Err(ConfigError::Missing(name)),
     }
+}
+
+/// Both prices or neither. Half a price is a mistake, not a default.
+fn prices(get: &impl Fn(&str) -> Option<String>) -> Result<Option<Prices>, ConfigError> {
+    let input = get(PRICE_IN_VAR).filter(|value| !value.trim().is_empty());
+    let output = get(PRICE_OUT_VAR).filter(|value| !value.trim().is_empty());
+    match (input, output) {
+        (None, None) => Ok(None),
+        (Some(_), None) => Err(ConfigError::IncompletePrices(PRICE_IN_VAR, PRICE_OUT_VAR)),
+        (None, Some(_)) => Err(ConfigError::IncompletePrices(PRICE_OUT_VAR, PRICE_IN_VAR)),
+        (Some(input), Some(output)) => Ok(Some(Prices {
+            input_per_mtok: price(PRICE_IN_VAR, &input)?,
+            output_per_mtok: price(PRICE_OUT_VAR, &output)?,
+        })),
+    }
+}
+
+fn price(name: &'static str, raw: &str) -> Result<f64, ConfigError> {
+    raw.trim()
+        .parse()
+        .map_err(|_| ConfigError::BadPrice(name, raw.trim().to_string()))
 }

@@ -8,6 +8,7 @@
 //! loop needs.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -112,14 +113,15 @@ pub struct TempWorkspace {
     pub path: std::path::PathBuf,
 }
 
+/// Two tests can ask for a workspace in the same nanosecond; a counter cannot
+/// be asked twice.
+static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
+
 impl TempWorkspace {
     pub fn new(name: &str) -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|since| since.as_nanos())
-            .unwrap_or(0);
+        let seq = NEXT_WORKSPACE.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "harness-{name}-{}-{nanos}",
+            "harness-{name}-{}-{seq}",
             std::process::id()
         ));
         std::fs::create_dir_all(&path).unwrap();

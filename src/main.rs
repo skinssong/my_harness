@@ -20,13 +20,19 @@ use harness::{Client, Config, Request, Workspace};
 const SYSTEM: &str = "You work inside a small directory. Use the tools to look around \
 and to change things. Answer in as few words as possible.";
 
-const USAGE: &str = "usage: harness [--max-turns N] [--workspace DIR] [--log DIR] <task…>
+const USAGE: &str = "usage: harness [--max-turns N] [--workspace DIR] [--log DIR]
+                  [--max-usd X] [--stuck-after N] <task…>
        harness replay <record.jsonl>
 
 Asks one model one task. The model may list, read, write and run commands in the
 workspace, for up to N model calls (default 8). Every run is recorded under DIR
 (default .harness/runs); replay re-derives a recorded run without calling
-anything.";
+anything.
+
+  --max-usd X      stop once the run has cost more than X dollars; needs
+                   LLM_PRICE_IN and LLM_PRICE_OUT (dollars per million tokens)
+  --stuck-after N  stop when the same call produces the same result N times
+                   in a row (default 3; 0 disables)";
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -63,6 +69,8 @@ struct Options {
     workspace: PathBuf,
     log_dir: PathBuf,
     max_turns: u32,
+    max_usd: Option<f64>,
+    stuck_after: u32,
 }
 
 fn parse(args: &[String]) -> Result<Command, String> {
@@ -76,6 +84,8 @@ fn parse(args: &[String]) -> Result<Command, String> {
     let mut workspace = PathBuf::from(".");
     let mut log_dir = PathBuf::from(".harness/runs");
     let mut max_turns = Limits::default().max_turns;
+    let mut max_usd = None;
+    let mut stuck_after = Limits::default().stuck_after;
     let mut task: Vec<String> = Vec::new();
 
     let mut rest = args.iter();
@@ -95,6 +105,24 @@ fn parse(args: &[String]) -> Result<Command, String> {
                     .ok_or_else(|| format!("--workspace needs a directory\n\n{USAGE}"))?;
                 workspace = PathBuf::from(value);
             }
+            "--max-usd" => {
+                let value = rest
+                    .next()
+                    .ok_or_else(|| format!("--max-usd needs an amount\n\n{USAGE}"))?;
+                max_usd = Some(
+                    value
+                        .parse()
+                        .map_err(|_| format!("--max-usd must be a number, got {value}"))?,
+                );
+            }
+            "--stuck-after" => {
+                let value = rest
+                    .next()
+                    .ok_or_else(|| format!("--stuck-after needs a number\n\n{USAGE}"))?;
+                stuck_after = value
+                    .parse()
+                    .map_err(|_| format!("--stuck-after must be a whole number, got {value}"))?;
+            }
             "--log" => {
                 let value = rest
                     .next()
@@ -113,6 +141,8 @@ fn parse(args: &[String]) -> Result<Command, String> {
         workspace,
         log_dir,
         max_turns,
+        max_usd,
+        stuck_after,
     }))
 }
 
@@ -122,6 +152,13 @@ async fn run(options: &Options) -> Result<(), String> {
         Request::new(config.model(), SYSTEM, &options.task).map_err(|err| err.to_string())?;
     let workspace = Workspace::open(&options.workspace).map_err(|err| err.to_string())?;
     let registry = tools::builtin();
+    let prices = config.prices();
+    if options.max_usd.is_some() && prices.is_none() {
+        return Err(
+            "a money budget needs LLM_PRICE_IN and LLM_PRICE_OUT (dollars per million tokens)"
+                .to_string(),
+        );
+    }
     let client = Client::new(config)
         .map_err(|err| err.to_string())?
         .with_tools(registry.specs());
@@ -131,6 +168,9 @@ async fn run(options: &Options) -> Result<(), String> {
 
     let limits = Limits {
         max_turns: options.max_turns,
+        max_usd: options.max_usd,
+        stuck_after: options.stuck_after,
+        prices,
         ..Limits::default()
     };
     let outcome = agent::run(&client, &registry, &workspace, request, limits, &mut log)
@@ -138,12 +178,17 @@ async fn run(options: &Options) -> Result<(), String> {
         .map_err(|err| format!("{err}\nrecord: {}", record.display()))?;
 
     println!("{}", outcome.answer);
+    let cost = match limits.spent_usd(outcome.usage) {
+        Some(usd) => format!(" · ${usd:.6}"),
+        None => String::new(),
+    };
     println!(
-        "\ntokens {} in · {} out · {} total · {} turn(s)",
+        "\ntokens {} in · {} out · {} total · {} turn(s){}",
         outcome.usage.input(),
         outcome.usage.output(),
         outcome.usage.total(),
-        outcome.turns
+        outcome.turns,
+        cost
     );
     println!("record {}", record.display());
     Ok(())

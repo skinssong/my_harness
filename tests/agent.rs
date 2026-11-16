@@ -8,6 +8,9 @@ mod common;
 use common::{config_at, response, serve_many, TempWorkspace};
 
 use harness::agent::{self, Error, Limits};
+use harness::config::Prices;
+use harness::event::Event;
+use harness::log::Log;
 use harness::{Client, Request, Workspace};
 
 fn calling(calls: &[(&str, &str, &str)], usage: (u32, u32)) -> String {
@@ -220,6 +223,7 @@ async fn a_large_result_is_shaped_before_it_is_sent() {
         Limits {
             max_turns: 4,
             max_observation_bytes: 1_000,
+            ..Limits::default()
         },
         &mut harness::log::Discard,
     )
@@ -238,4 +242,141 @@ async fn a_large_result_is_shaped_before_it_is_sent() {
         "the second request stayed small: {} bytes",
         second.len()
     );
+}
+
+#[tokio::test]
+async fn a_run_stops_when_it_overspends() {
+    let (addr, seen) = serve_many(vec![calling(&[("c1", "list_dir", "{}")], (100, 10))]).await;
+    let dir = TempWorkspace::new("budget");
+    let workspace = Workspace::open(&dir.path).unwrap();
+    let registry = harness::tools::builtin();
+    let client = Client::new(config_at(addr, "k"))
+        .unwrap()
+        .with_tools(registry.specs());
+    let request = Request::new("m", "s", "look around").unwrap();
+
+    let mut log = Log::create(dir.path.join("runs")).unwrap();
+    let record = log.path().to_path_buf();
+    let outcome = agent::run(
+        &client,
+        &registry,
+        &workspace,
+        request,
+        Limits {
+            // 110 tokens at $1/M is $0.00011, so the cap is passed on turn one.
+            max_usd: Some(0.00005),
+            prices: Some(Prices {
+                input_per_mtok: 1.0,
+                output_per_mtok: 1.0,
+            }),
+            ..Limits::default()
+        },
+        &mut log,
+    )
+    .await;
+    drop(log);
+
+    match outcome {
+        Err(Error::BudgetExceeded { turns, spent, cap }) => {
+            assert_eq!(turns, 1);
+            assert!(spent > cap, "spent {spent} should exceed {cap}");
+        }
+        other => panic!("expected the budget to stop it, got {other:?}"),
+    }
+
+    assert_eq!(
+        seen.await.unwrap().len(),
+        1,
+        "it stops before spending on another call"
+    );
+    let events = Log::read(&record).unwrap();
+    assert!(
+        matches!(events.last(), Some(Event::Halt { reason, .. }) if reason.starts_with("budget")),
+        "the record says why it stopped: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(event, Event::Tool { .. })),
+        "the budget was checked before acting: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_run_stops_when_the_same_call_and_result_repeat() {
+    let (addr, _seen) = serve_many(vec![
+        calling(&[("c1", "list_dir", "{}")], (10, 1)),
+        calling(&[("c2", "list_dir", "{}")], (10, 1)),
+    ])
+    .await;
+    let dir = TempWorkspace::new("stuck");
+    let workspace = Workspace::open(&dir.path).unwrap();
+    let registry = harness::tools::builtin();
+    let client = Client::new(config_at(addr, "k"))
+        .unwrap()
+        .with_tools(registry.specs());
+    let request = Request::new("m", "s", "look around").unwrap();
+
+    let mut log = Log::create(dir.path.join("runs")).unwrap();
+    let record = log.path().to_path_buf();
+    let outcome = agent::run(
+        &client,
+        &registry,
+        &workspace,
+        request,
+        Limits {
+            stuck_after: 2,
+            ..Limits::default()
+        },
+        &mut log,
+    )
+    .await;
+    drop(log);
+
+    match outcome {
+        Err(Error::Stuck { turns, repeats }) => {
+            assert_eq!(turns, 2);
+            assert_eq!(repeats, 2);
+        }
+        other => panic!("expected the repetition to stop it, got {other:?}"),
+    }
+    let events = Log::read(&record).unwrap();
+    assert!(
+        matches!(events.last(), Some(Event::Halt { reason, .. }) if reason.starts_with("stuck")),
+        "the record says why it stopped: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_run_is_not_stuck_when_each_turn_does_something_different() {
+    let (addr, _seen) = serve_many(vec![
+        calling(&[("c1", "read_file", r#"{"path":"a.txt"}"#)], (10, 1)),
+        calling(&[("c2", "read_file", r#"{"path":"b.txt"}"#)], (10, 1)),
+        calling(&[("c3", "list_dir", "{}")], (10, 1)),
+        answering("done", (10, 1)),
+    ])
+    .await;
+    let dir = TempWorkspace::new("notstuck");
+    std::fs::write(dir.path.join("a.txt"), "first").unwrap();
+    std::fs::write(dir.path.join("b.txt"), "second").unwrap();
+    let workspace = Workspace::open(&dir.path).unwrap();
+    let registry = harness::tools::builtin();
+    let client = Client::new(config_at(addr, "k"))
+        .unwrap()
+        .with_tools(registry.specs());
+    let request = Request::new("m", "s", "look around").unwrap();
+
+    let outcome = agent::run(
+        &client,
+        &registry,
+        &workspace,
+        request,
+        Limits {
+            stuck_after: 2,
+            ..Limits::default()
+        },
+        &mut harness::log::Discard,
+    )
+    .await
+    .expect("different work each turn is not being stuck");
+
+    assert_eq!(outcome.turns, 4);
 }

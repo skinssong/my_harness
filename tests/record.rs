@@ -220,6 +220,8 @@ fn a_reply_with_neither_text_nor_calls_is_refused() {
             system: "s".to_string(),
             task: "t".to_string(),
             max_turns: 8,
+            stuck_after: 3,
+            max_usd: None,
         },
         Event::Reply {
             text: None,
@@ -240,6 +242,8 @@ fn the_log_file_is_one_json_object_per_line() {
         system: "s".to_string(),
         task: "t".to_string(),
         max_turns: 8,
+        stuck_after: 3,
+        max_usd: None,
     })
     .unwrap();
     log.append(&Event::Reply {

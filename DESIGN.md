@@ -171,6 +171,17 @@ Two carriers are worth a second look. `Reply` is data, but its variant is what t
 
 **Done looks like:** a task runs, the log is noted, the network is disconnected, the log replays to an identical transcript and identical spend; then `inspect` shows the turn where it went wrong.
 
+**Built** *(2026-11-16)*. The record, replay, the money budget and the stuck detector.
+
+- **Record**: one JSON object per line, flushed per event, so a run that dies at turn nine leaves nine turns. The loop takes a `Recorder`, so it never branches on whether it is being kept.
+- **Replay**: rebuilds each reply from the record, runs it through the same `decide` the live loop uses, and checks the recorded effects match — the right tools, in the right order, ending in the same answer and the same turn count. It calls nothing and touches nothing.
+- **Budget**: `--max-usd`, priced from `LLM_PRICE_IN` and `LLM_PRICE_OUT` (dollars per million tokens, both or neither). Checked *before* acting, so passing the budget does not also run tools.
+- **Stuck**: the same call, arguments and result `--stuck-after` times in a row (default 3, 0 disables) ends the run. Whole turns are compared, so a model alternating between two states is not caught — a known limit.
+
+Two gaps worth naming. Replay re-derives the *decisions* but not the *reason* a run halted: a budget or stuck stop is recorded with its reason and replayed by turn count alone, because recomputing it would need the limits and prices. And `inspect`, promised above, does not exist — the record is JSONL and greppable, which is not the same thing.
+
+Live evidence: a three-turn run recorded eight events and replayed offline — provider settings removed from the environment — to the same answer and the same 2,605 in · 142 out. A run with `--max-usd 0.000001` stopped after its first call: `spent $0.000236 of a $0.000001 budget`, record written, exit 1.
+
 S1–S3 is the minimum "I understand harnesses" set.
 
 ---
@@ -255,6 +266,6 @@ Tool-calling quality is model-dependent. A weak model produces malformed calls, 
 
 - **S1:** one prompt, one reply, tokens reported, exit 0. *Met live: `ok`, 44 in · 13 out.*
 - **S2:** a file round trip in three turns; a forced one-turn ceiling halts cleanly; a megabyte of command output is elided, not sent; a tool-calling reply with `content: null` is accepted; a malformed `arguments` string comes back as an observation rather than an abort. *Met: the round trip and the ceiling live; the rest by test — a 20 KB observation arrives under 5 KB on the wire.*
-- **S3:** replay a recorded run with the network down; transcript and spend identical.
+- **S3:** replay a recorded run with the network down; transcript and spend identical. *Met, plus the ceiling, the money budget and the stuck detector each end a run with a recorded reason.*
 
 Unit tests target the pure parts — the reducer, the decision function, the stuck detector, shaping — with no network and no key.

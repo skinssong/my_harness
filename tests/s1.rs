@@ -4,7 +4,7 @@
 //! would see: a config read from three named variables, a request rendered as a
 //! body, a provider response read back, an answer reported.
 
-use harness::config::{Config, ConfigError};
+use harness::config::{Config, ConfigError, Prices};
 use harness::reply::{Reply, ReplyError};
 use harness::message::Message;
 use harness::request::{Request, RequestError};
@@ -224,4 +224,61 @@ fn the_report_shows_the_answer_and_what_it_cost() {
     assert!(report.contains("27 in"), "report was: {report}");
     assert!(report.contains("1 out"), "report was: {report}");
     assert!(report.contains("28 total"), "report was: {report}");
+}
+
+// -- prices: optional, but never half a price -----------------------------
+
+#[test]
+fn prices_are_absent_when_not_configured() {
+    assert_eq!(config_from("https://example.test/v1").prices(), None);
+}
+
+#[test]
+fn half_a_price_is_refused() {
+    let result = Config::from_lookup(lookup(&[
+        ("LLM_BASE_URL", "https://example.test/v1"),
+        ("LLM_API_KEY", "k"),
+        ("LLM_MODEL", "m"),
+        ("LLM_PRICE_IN", "1.5"),
+    ]));
+    assert_eq!(
+        result.unwrap_err(),
+        ConfigError::IncompletePrices("LLM_PRICE_IN", "LLM_PRICE_OUT")
+    );
+}
+
+#[test]
+fn both_halves_give_a_price_per_million_tokens() {
+    let config = Config::from_lookup(lookup(&[
+        ("LLM_BASE_URL", "https://example.test/v1"),
+        ("LLM_API_KEY", "k"),
+        ("LLM_MODEL", "m"),
+        ("LLM_PRICE_IN", "0.27"),
+        ("LLM_PRICE_OUT", "1.10"),
+    ]))
+    .unwrap();
+
+    let prices: Prices = config.prices().expect("prices parsed");
+    assert_eq!(prices.input_per_mtok, 0.27);
+    assert_eq!(prices.output_per_mtok, 1.10);
+    // a million in, a million out
+    assert!((prices.cost(1_000_000, 1_000_000) - 1.37).abs() < 1e-9);
+    // 2,605 in, 142 out
+    let small = prices.cost(2_605, 142);
+    assert!((small - (2_605.0 * 0.27 + 142.0 * 1.10) / 1e6).abs() < 1e-12);
+}
+
+#[test]
+fn a_price_that_is_not_a_number_is_refused() {
+    let result = Config::from_lookup(lookup(&[
+        ("LLM_BASE_URL", "https://example.test/v1"),
+        ("LLM_API_KEY", "k"),
+        ("LLM_MODEL", "m"),
+        ("LLM_PRICE_IN", "cheap"),
+        ("LLM_PRICE_OUT", "1.10"),
+    ]));
+    assert_eq!(
+        result.unwrap_err(),
+        ConfigError::BadPrice("LLM_PRICE_IN", "cheap".to_string())
+    );
 }
