@@ -7,13 +7,15 @@ flowchart TB
 
     LOG["Log<br/>writes, reads the record"]:::new
     REPLAY["replay()<br/>re-derives a run"]:::new
+    PROJECT["project()<br/>masks old results<br/>S4 · planned"]:::planned
 
-    PROV["provider<br/>not ours"]:::external
+    PROV["provider"]:::external
 
     MAIN -->|"Request · Limits"| LOOP
     MAIN -->|"Config · tools<br/>at build"| CLIENT
-    LOOP -->|"Request"| CLIENT
-    CLIENT -->|"Wire {model, messages, tools}"| PROV
+    LOOP -->|"Request, full"| PROJECT
+    PROJECT -->|"Request, masked"| CLIENT
+    CLIENT -->|"Wire"| PROV
     PROV -->|"bytes"| CLIENT
     CLIENT -->|"Reply"| LOOP
     LOOP -->|"ToolCall"| REG
@@ -29,4 +31,5 @@ flowchart TB
 
     classDef old fill:#ECEFF1,stroke:#90A4AE,color:#37474F
     classDef new fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
+    classDef planned fill:#FFFFFF,stroke:#2E7D32,color:#1B5E20,stroke-dasharray: 4 3
     classDef external fill:#F5F5F5,stroke:#9E9E9E,color:#424242,stroke-dasharray: 4 3

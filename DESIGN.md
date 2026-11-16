@@ -67,6 +67,8 @@ Each phase has one document: the requirement, why the previous phase could not m
 
 Boxes act; every arrow is labelled with the value that crosses it. `main` builds a `Config` and the tools array once, hands a `Request` and `Limits` to the loop, and prints the `Outcome`. The loop sends a `Request` per turn, receives a `Reply`, and either stops or turns that reply's `ToolCall` into an `Observation` by way of the registry.
 
+`project()` is drawn in outline because it is designed and not built. S4 inserts it on the loop's path to the client: the request that leaves is not the request that was built, and the difference is decided in one pure function — which is why it can be added without moving anything else. The record still receives full events, so `Log` and `replay()` are untouched by masking.
+
 Grey is what S1 and S2 built; green is what S3 added. The loop hands every turn to `Log` as an `Event`, and `replay()` gets the file back as a `Vec<Event>` and judges each recorded reply with the same `decide()` the live loop uses — the dashed edge. It borrows the loop's judgement without running the loop, which is why replay can catch a change in behaviour rather than merely reprint a transcript.
 
 ![Structs and the values between them](diagrams/structs.svg)
