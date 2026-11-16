@@ -33,21 +33,13 @@ Now the same shape with every result at the 8 KiB cap, one call per turn (`740 +
 
 ## The projection
 
-Masking, not summarising. Older tool results keep their place and lose their bulk:
+Masking, not summarising. Older tool results keep their place and lose their bulk — the stack of messages stays as it was, one layer per message, and only the old results collapse:
 
-```
-before (turn 6)                       after the projection
-────────────────────────────────────  ────────────────────────────────────────
-system   You work inside a small…     system   You work inside a small…
-user     find the failing test        user     find the failing test
-assistant → bash {cat build.log}      assistant → bash {cat build.log}
-tool     exit 0\n<8,192 bytes>        tool     [masked: was 8,192 bytes;
-                                                 rerun the command if needed]
-…                                     …
-assistant → bash {grep FAIL log}      assistant → bash {grep FAIL log}
-tool     exit 0\nFAILED …             tool     exit 0\nFAILED …        ← last 2 turns kept
-assistant → read_file {log}           assistant → read_file {log}
-```
+![The request stack before and after the projection](../diagrams/s4-projection.svg)
+
+*Source: [diagrams/s4-projection.mmd](../diagrams/s4-projection.mmd). Grey is a message kept as it was; amber is a message replaced by its marker.*
+
+The record still holds all 8,192 bytes of that `cat build.log` result; the request carries a marker saying where they went. Nothing is reordered, and no message loses its partner — which is the whole difficulty, since a provider rejects a `tool` message whose call is missing.
 
 **Rules.**
 
@@ -67,7 +59,7 @@ assistant → read_file {log}           assistant → read_file {log}
 
 *Source: [diagrams/p4-structs.mmd](../diagrams/p4-structs.mmd). Grey is built and unchanged; green is new in this phase; amber is an existing block whose shape changed; a red dotted edge is a connection the phase removes.*
 
-Grey is S1–S3 unchanged, and that is the phase's whole claim: the record has to be untouched for replay to keep working, and nothing here reaches it. Green adds `project()`, inserted on the loop's path to the client. The **red dotted** edge is the connection it removes — the loop no longer sends its `Request` straight to `Client`; what leaves is a projection of what was built, and the difference is decided in one pure function, which is why nothing else has to move.
+Grey is S1–S3 unchanged, and that is the phase's whole claim: the record has to be untouched for replay to keep working, and nothing here reaches it. Green adds `project()`, inserted on the loop's path to the client. The **red dotted** edge is the connection it removes — the loop no longer sends its `Request` straight to `Client`; what leaves is a projection of what was built, and the difference is decided in one pure function, which is why nothing else has to move. What it does to a request is [the stack above](#the-projection); this says only where it sits.
 
 Three things do not become nodes:
 
