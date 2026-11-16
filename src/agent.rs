@@ -20,6 +20,7 @@
 
 use crate::client::{Client, Error as ClientError};
 use crate::config::Prices;
+use crate::context::{self, ContextPolicy};
 use crate::event::{Event, LoggedCall};
 use crate::log::{LogError, Recorder};
 use crate::message::{Message, ToolCall};
@@ -39,6 +40,9 @@ pub struct Limits {
     /// is declared stuck. Zero disables the check.
     pub stuck_after: u32,
     pub prices: Option<Prices>,
+    /// How much of the conversation goes on the wire. The record is never
+    /// touched by it.
+    pub context: ContextPolicy,
 }
 
 impl Default for Limits {
@@ -49,6 +53,7 @@ impl Default for Limits {
             max_usd: None,
             stuck_after: 3,
             prices: None,
+            context: ContextPolicy::default(),
         }
     }
 }
@@ -125,9 +130,24 @@ pub async fn run(
     let mut spent = Usage::new(0, 0);
     let mut previous_turn: Option<String> = None;
     let mut repeats = 0u32;
+    let mut said_it_masks = false;
 
     for turn in 1..=limits.max_turns {
-        let reply = client.complete(&request).await?;
+        // What goes on the wire is a projection of what the run has said so far.
+        // The transcript itself is not touched, so the record keeps every byte.
+        let sent = context::project(request.messages(), &limits.context);
+        if !said_it_masks {
+            let masked = context::masked_count(request.messages(), &sent);
+            if masked > 0 {
+                eprintln!(
+                    "context: {masked} older tool result(s) masked for this request; \
+                     the record keeps them whole"
+                );
+                said_it_masks = true;
+            }
+        }
+
+        let reply = client.complete(&request.replaced(sent)).await?;
         let usage = reply.usage();
         spent = spent.plus(usage);
 

@@ -1,6 +1,6 @@
 # Rust agent harness — design
 
-**Status:** S1–S3 built and running; S4 and S5 designed; S6 and S7 deliberately open.
+**Status:** S1–S4 built and running; S5 designed; S6 and S7 deliberately open.
 
 ## Context
 
@@ -18,7 +18,7 @@ The eval rig is drawn beside the spine rather than on it: it is required by the 
 
 Diagrams are cumulative. **Grey** blocks were built in an earlier phase and are unchanged; **green** blocks are new in this phase; **amber** marks an existing block whose *shape* changes; a **red dotted** edge is a connection the phase removes.
 
-Every phase has its own document, and every phase document carries the whole system drawn at that phase — directly on top of the one before it, so the difference *is* the phase. S1–S3 are built; S4 and S5 are designed with a worked data flow but no code; S6 and S7 are open, with their blocks deliberately undesigned.
+Every phase has its own document, and every phase document carries the whole system drawn at that phase — directly on top of the one before it, so the difference *is* the phase. S1–S4 are built; S5 is designed with a worked data flow but no code; S6 and S7 are open, with their blocks deliberately undesigned.
 
 Every diagram is rendered from its `.mmd` source by [`diagrams/build.sh`](diagrams/build.sh), which then applies [`diagrams/size.py`](diagrams/size.py): mermaid otherwise leaves the size to the container, which draws small in a narrow column. Edit the source, run the script, and the SVG matches what was drawn. Any `.svg` also opens at full size on its own.
 
@@ -59,7 +59,7 @@ Each phase has one document: the requirement, why the previous phase could not m
 | [S1](docs/01-s1-call.md) | one prompt in, one answer out, cost known | **built** |
 | [S2](docs/02-s2-tools.md) | the model acts, observes, continues | **built** |
 | [S3](docs/03-s3-record.md) | explain and reproduce any run, offline | **built** |
-| [S4](docs/04-s4-context.md) | keep a long task inside the window | designed, not built |
+| [S4](docs/04-s4-context.md) | keep a long task inside the window | **built** |
 | [S5](docs/05-s5-permissions.md) | bound what the agent may do unasked | designed, not built |
 | [S6, S7](docs/06-s6-s7-open.md) | compose and measure; extend without rebuilding | open |
 
@@ -79,7 +79,7 @@ The drawing is cumulative, and it lives in the phase documents — one per phase
 
 Read any one on its own: grey is what earlier phases built, green is what that phase adds, amber is an existing block whose shape changes, red dotted is a connection it removes. No phase is a redraw.
 
-S4 and S5 are designed rather than built, so their green and amber describe intent, not a commit. `project()` is green in S4 and grey in S5 for the same reason it is grey here: by then it is part of the system the later phase builds on.
+S5 is designed rather than built, so its green and amber describe intent, not a commit. `project()` is green in S4 and grey in S5 because by then it is part of the system the later phase builds on.
 
 | Actor | Acts by |
 |---|---|

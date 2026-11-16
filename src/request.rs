@@ -46,6 +46,16 @@ impl Request {
         }
     }
 
+    /// The same request carrying a different conversation. This is how a
+    /// projection is sent without disturbing the transcript it was drawn from:
+    /// the loop keeps the full one and posts a masked copy.
+    pub fn replaced(&self, messages: Vec<Message>) -> Self {
+        Self {
+            model: self.model.clone(),
+            messages,
+        }
+    }
+
     pub fn model(&self) -> &str {
         &self.model
     }

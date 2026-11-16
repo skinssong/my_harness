@@ -48,6 +48,20 @@ async fn run_loop(
     replies: Vec<String>,
     max_turns: u32,
 ) -> (Result<agent::Outcome, Error>, Vec<String>, TempWorkspace) {
+    run_loop_with(
+        replies,
+        Limits {
+            max_turns,
+            ..Limits::default()
+        },
+    )
+    .await
+}
+
+async fn run_loop_with(
+    replies: Vec<String>,
+    limits: Limits,
+) -> (Result<agent::Outcome, Error>, Vec<String>, TempWorkspace) {
     let (addr, seen) = serve_many(replies).await;
     let workspace_dir = TempWorkspace::new("loop");
     std::fs::write(workspace_dir.path.join("a.txt"), "hello from disk\n").unwrap();
@@ -64,10 +78,7 @@ async fn run_loop(
         &registry,
         &workspace,
         request,
-        Limits {
-            max_turns,
-            ..Limits::default()
-        },
+        limits,
         &mut harness::log::Discard,
     )
     .await;
@@ -379,4 +390,77 @@ async fn a_run_is_not_stuck_when_each_turn_does_something_different() {
     .expect("different work each turn is not being stuck");
 
     assert_eq!(outcome.turns, 4);
+}
+
+/// Everything S4 claims, in one run: the request that leaves is not the request
+/// that was built, and the record never notices.
+#[tokio::test]
+async fn the_wire_is_masked_but_the_record_is_not() {
+    let (addr, seen) = serve_many(vec![
+        calling(&[("call_1", "read_file", r#"{"path":"a.txt"}"#)], (100, 10)),
+        calling(&[("call_2", "list_dir", "{}")], (100, 10)),
+        calling(&[("call_3", "read_file", r#"{"path":"a.txt"}"#)], (100, 10)),
+        answering("done", (100, 10)),
+    ])
+    .await;
+
+    let workspace_dir = TempWorkspace::new("mask");
+    std::fs::write(workspace_dir.path.join("a.txt"), "hello from disk\n").unwrap();
+    let log_dir = TempWorkspace::new("mask-log");
+    let mut log = harness::log::Log::create(&log_dir.path).unwrap();
+    let record = log.path().to_path_buf();
+
+    let workspace = Workspace::open(&workspace_dir.path).unwrap();
+    let registry = harness::tools::builtin();
+    let client = Client::new(config_at(addr, "k"))
+        .unwrap()
+        .with_tools(registry.specs());
+    let request = Request::new("m", "be brief", "what does a.txt say?").unwrap();
+
+    let outcome = agent::run(
+        &client,
+        &registry,
+        &workspace,
+        request,
+        Limits {
+            max_turns: 8,
+            // Small enough that the third request has to lose something.
+            context: harness::ContextPolicy {
+                window: 150,
+                keep_turns: 1,
+                trigger: 0.6,
+                reserved: 0,
+            },
+            ..Limits::default()
+        },
+        &mut log,
+    )
+    .await;
+    assert!(outcome.is_ok(), "masking must not break the run");
+
+    let seen = seen.await.unwrap();
+    let third = &seen[2];
+    assert!(
+        third.contains("[masked: was 15 bytes;"),
+        "the oldest result should be a marker by the third request: {third}"
+    );
+    assert!(
+        third.contains("\"tool_call_id\":\"call_1\""),
+        "the masked result keeps its id: {third}"
+    );
+    assert_eq!(
+        third.matches("\"id\":\"call_1\"").count(),
+        1,
+        "its assistant call is still above it, so the pair travels together"
+    );
+
+    let recorded = std::fs::read_to_string(&record).unwrap();
+    assert!(
+        recorded.contains("hello from disk"),
+        "the record keeps what the wire dropped"
+    );
+    assert!(
+        !recorded.contains("[masked:"),
+        "a marker is a request artefact, never a recorded one"
+    );
 }

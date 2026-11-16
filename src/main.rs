@@ -15,13 +15,14 @@ use harness::agent::{self, Limits};
 use harness::log::Log;
 use harness::replay;
 use harness::tools;
-use harness::{Client, Config, Request, Workspace};
+use harness::{Client, Config, ContextPolicy, Request, Workspace};
 
 const SYSTEM: &str = "You work inside a small directory. Use the tools to look around \
 and to change things. Answer in as few words as possible.";
 
 const USAGE: &str = "usage: harness [--max-turns N] [--workspace DIR] [--log DIR]
-                  [--max-usd X] [--stuck-after N] <task…>
+                  [--max-usd X] [--stuck-after N] [--context-window N]
+                  [--keep-turns K] <task…>
        harness replay <record.jsonl>
 
 Asks one model one task. The model may list, read, write and run commands in the
@@ -35,7 +36,11 @@ anything.
   --max-usd X      stop once the run has cost more than X dollars; needs
                    LLM_PRICE_IN and LLM_PRICE_OUT (dollars per million tokens)
   --stuck-after N  stop when the same call produces the same result N times
-                   in a row (default 3; 0 disables)";
+                   in a row (default 3; 0 disables)
+  --context-window N  what the model accepts, in tokens (default 64000). Past
+                   60% of it, old tool results are masked in the request; the
+                   record is never masked
+  --keep-turns K   turns kept verbatim at the end of the request (default 2)";
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -74,6 +79,8 @@ struct Options {
     max_turns: u32,
     max_usd: Option<f64>,
     stuck_after: u32,
+    context_window: usize,
+    keep_turns: usize,
 }
 
 fn parse(args: &[String]) -> Result<Command, String> {
@@ -89,6 +96,8 @@ fn parse(args: &[String]) -> Result<Command, String> {
     let mut max_turns = Limits::default().max_turns;
     let mut max_usd = None;
     let mut stuck_after = Limits::default().stuck_after;
+    let mut context_window = ContextPolicy::default().window;
+    let mut keep_turns = ContextPolicy::default().keep_turns;
     let mut task: Vec<String> = Vec::new();
 
     let mut rest = args.iter();
@@ -126,6 +135,22 @@ fn parse(args: &[String]) -> Result<Command, String> {
                     .parse()
                     .map_err(|_| format!("--stuck-after must be a whole number, got {value}"))?;
             }
+            "--context-window" => {
+                let value = rest
+                    .next()
+                    .ok_or_else(|| format!("--context-window needs a number\n\n{USAGE}"))?;
+                context_window = value.parse().map_err(|_| {
+                    format!("--context-window must be a whole number of tokens, got {value}")
+                })?;
+            }
+            "--keep-turns" => {
+                let value = rest
+                    .next()
+                    .ok_or_else(|| format!("--keep-turns needs a number\n\n{USAGE}"))?;
+                keep_turns = value
+                    .parse()
+                    .map_err(|_| format!("--keep-turns must be a whole number, got {value}"))?;
+            }
             "--log" => {
                 let value = rest
                     .next()
@@ -146,6 +171,8 @@ fn parse(args: &[String]) -> Result<Command, String> {
         max_turns,
         max_usd,
         stuck_after,
+        context_window,
+        keep_turns,
     }))
 }
 
@@ -198,6 +225,11 @@ async fn run(options: &Options) -> Result<(), String> {
         max_usd: options.max_usd,
         stuck_after: options.stuck_after,
         prices,
+        context: ContextPolicy {
+            window: options.context_window,
+            keep_turns: options.keep_turns,
+            ..ContextPolicy::default()
+        },
         ..Limits::default()
     };
     let outcome = agent::run(&client, &registry, &workspace, request, limits, &mut log)

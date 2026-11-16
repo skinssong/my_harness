@@ -38,6 +38,8 @@ tokens 2532 in · 113 out · 2645 total · 3 turn(s)
 | `--max-turns N` | model calls allowed before stopping (default 8) |
 | `--max-usd X` | stop once the run has cost more than X (needs the prices above) |
 | `--stuck-after N` | stop when the same call and result repeat N times (default 3, 0 off) |
+| `--context-window N` | tokens the model accepts (default 64000); past 60% of it, old tool results are masked in the request |
+| `--keep-turns K` | turns kept verbatim at the end of the request (default 2) |
 | `--log DIR` | where runs are recorded (default `~/.harness/runs`) |
 
 ## What it can do
@@ -97,15 +99,18 @@ reach is not an audit trail — `write_file` and `bash` would both reach it. Poi
 ## Check it
 
 ```
-cargo test      # 80 tests; the provider is a localhost stub, so no key is needed
+cargo test      # 91 tests; the provider is a localhost stub, so no key is needed
 cargo clippy --all-targets
 ```
 
 ## Not yet
 
-No compaction (S4), so a long run eventually outgrows the window. No permissions
-(S5): `bash` is unbounded, and nothing asks before a file is written. No
-subagents or eval rig (S6), no MCP (S7). No retries anywhere.
+No permissions (S5): `bash` is unbounded, and nothing asks before a file is
+written. No subagents or eval rig (S6), no MCP (S7). No retries anywhere.
+
+Masking is not compaction: an old result is replaced by a marker, never by a
+summary, so nothing is inferred about what it meant. A run that needs the masked
+bytes back has to re-read them.
 
 Replay re-derives decisions but not halt reasons: a budget or stuck stop is
 replayed by turn count alone.

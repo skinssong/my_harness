@@ -8,6 +8,7 @@
 pub mod agent;
 pub mod client;
 pub mod config;
+pub mod context;
 pub mod event;
 pub mod log;
 pub mod message;
@@ -21,6 +22,7 @@ pub mod workspace;
 pub use agent::{Limits, Outcome};
 pub use client::Client;
 pub use config::{Config, ConfigError};
+pub use context::{project, ContextPolicy};
 pub use event::Event;
 pub use log::{Discard, Log, Recorder};
 pub use message::{Message, ToolCall};

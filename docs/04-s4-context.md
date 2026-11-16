@@ -1,6 +1,6 @@
 # S4 — keep a long task inside the window
 
-**Status:** designed, 2026-11-16. No code yet.
+**Status:** built, 2026-11-16
 
 [← design index](../DESIGN.md)
 
@@ -51,7 +51,24 @@ The record still holds all 8,192 bytes of that `cat build.log` result; the reque
 
 **Where it lives.** `fn project(messages: &[Message], policy: &ContextPolicy) -> Vec<Message>` in `context.rs` — pure, so it is tested without a network and without a model. The loop calls it when it builds each request; nothing else changes. The record keeps the full text, so **replay is unaffected**: it reads the record, never the projection.
 
-**Estimating size.** `bytes / 4` plus the fixed cost, with no tokenizer dependency. The decision it drives is coarse — mask or don't — and a tokenizer would buy precision the threshold does not need. If it ever drives a hard limit, that changes.
+**Estimating size.** `bytes / 4` plus `reserved` — the tool schemas, which `messages` does not contain and which are re-sent every turn. No tokenizer dependency. The decision it drives is coarse — mask or don't — and a tokenizer would buy precision the threshold does not need. If it ever drives a hard limit, that changes.
+
+**Built** *(2026-11-16)*. What the paragraphs above turned into:
+
+- `context.rs`: `ContextPolicy { window, keep_turns, trigger, reserved }`, `estimate()`, `project()`. The loop builds each request through it; the transcript it keeps and records is untouched.
+- Masking is **oldest first, stopping as soon as the estimate fits**, not all-or-nothing. Reaching 60% of the window should not throw away every old result at once — the further back a result sits the less it is worth, and stopping early keeps the rest.
+- A turn is counted by its `assistant` message, the only element of one the array marks as such. `keep_turns` larger than the number of turns means nothing is old enough to mask.
+- `Request::replaced()` posts a projected message list without disturbing the conversation it was drawn from. That one method is the whole of the loop's change.
+- The run says **once**, on stderr, when it starts masking. The record does not note it, because the record is what masking never touches.
+
+Live evidence, 4 turns over a 3 KB and a 16-byte file with `--context-window 2000 --keep-turns 1`:
+
+```
+context: 3 older tool result(s) masked for this request; the record keeps them whole
+tokens 4784 in · 302 out · 5086 total · 4 turn(s)
+```
+
+Replaying that record offline reproduced the run exactly — and the record contains no marker, only the bytes the wire dropped.
 
 ## The system at this phase
 
@@ -76,6 +93,7 @@ Three things do not become nodes:
 - **No model-summarised compaction.** Summarising costs a call, can summarise the task away, and needs its own guard against a summariser that loops. Rules first; this is the second step, and only if masking proves insufficient.
 - **No per-tool retention.** Every tool result ages the same way. A file read once may matter later more than a directory listing; nothing here knows that.
 - **No hard failure on overflow.** If a single turn still exceeds the window after masking, the provider errors and the run stops — correctly, but without a specific message.
+- **A mask invites a re-read.** This is not a defect, it is the bill for an actionable marker, and it showed up in the first live run: told that three outputs had been masked, the model answered *"Several outputs were masked. Rerunning:"* and ran the same commands again. That is the marker working — the model recovered, unasked — but it is turns and tokens spent, and it is what summarising would have bought instead. Aggressive settings make it common; at the defaults a run ends long before the threshold.
 
 ## How it is checked
 
@@ -83,3 +101,5 @@ Three things do not become nodes:
 - Every masked tool message keeps its `tool_call_id`, and its assistant call is still present.
 - A transcript under the threshold is returned unchanged — byte for byte.
 - Replay of a run whose request was projected still reproduces the run, because the record was never masked.
+
+*All four met: the first three by test, the last by replaying the live run above.*
