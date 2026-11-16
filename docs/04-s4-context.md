@@ -61,6 +61,22 @@ assistant → read_file {log}           assistant → read_file {log}
 
 **Estimating size.** `bytes / 4` plus the fixed cost, with no tokenizer dependency. The decision it drives is coarse — mask or don't — and a tokenizer would buy precision the threshold does not need. If it ever drives a hard limit, that changes.
 
+## Where it sits in the system
+
+The [struct diagram](../DESIGN.md#structs-and-what-crosses-between-them) gains one node and splits one edge; nothing else moves.
+
+```
+agent::run ──"Request, full"──▶ project() ──"Request, masked"──▶ Client
+```
+
+| What | Kind | Why it does — or does not — become a node |
+|---|---|---|
+| `project()` | actor | it transforms, the same way `replay()` does |
+| `ContextPolicy` | carrier | rides in `Limits`, which already flows `main → agent::run`; a second edge would make it look like an independent input |
+| the mask marker | carrier | text inside an existing `Message`; a type for a string buys nothing |
+
+In the diagram `project()` is drawn in outline, because it is designed and not built. `Log` still receives whole events and `replay()` still reads the record, so masking is invisible to both — which is this phase's own claim made visible: the record is the truth, and the prompt is a projection of it.
+
 ## What it does not do
 
 - **No model-summarised compaction.** Summarising costs a call, can summarise the task away, and needs its own guard against a summariser that loops. Rules first; this is the second step, and only if masking proves insufficient.
