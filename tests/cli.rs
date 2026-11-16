@@ -8,7 +8,7 @@ mod common;
 
 use std::process::Command;
 
-use common::{response, serve_once};
+use common::{response, serve_many, serve_once, TempWorkspace};
 
 const BIN: &str = env!("CARGO_BIN_EXE_harness");
 
@@ -86,4 +86,61 @@ fn help_is_answered_without_a_call() {
 
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("usage:"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_is_recorded_and_replays_with_no_credentials_at_all() {
+    let (addr, _seen) = serve_many(vec![response("200 OK", BODY)]).await;
+    let dir = TempWorkspace::new("cli-record");
+    let runs = dir.path.join("runs");
+
+    let output = tokio::process::Command::new(BIN)
+        .args([
+            "--workspace",
+            dir.path.to_str().unwrap(),
+            "--log",
+            runs.to_str().unwrap(),
+            "say",
+            "ok",
+        ])
+        .env("LLM_BASE_URL", format!("http://{addr}/v1"))
+        .env("LLM_API_KEY", "k")
+        .env("LLM_MODEL", "m")
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let record = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("record "))
+        .expect("the run prints where it recorded itself")
+        .to_string();
+
+    // Replay with no provider settings in the environment at all.
+    let replayed = Command::new(BIN)
+        .args(["replay", &record])
+        .current_dir(std::env::temp_dir())
+        .env_remove("LLM_BASE_URL")
+        .env_remove("LLM_API_KEY")
+        .env_remove("LLM_MODEL")
+        .output()
+        .unwrap();
+
+    assert!(
+        replayed.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&replayed.stderr)
+    );
+    let replayed_stdout = String::from_utf8_lossy(&replayed.stdout);
+    assert!(
+        replayed_stdout.contains("replayed 1 turn(s)"),
+        "stdout: {replayed_stdout}"
+    );
+    assert!(replayed_stdout.contains("27 in"), "stdout: {replayed_stdout}");
 }

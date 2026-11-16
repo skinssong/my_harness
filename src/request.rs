@@ -50,6 +50,20 @@ impl Request {
         &self.model
     }
 
+    pub fn system(&self) -> Option<&str> {
+        match self.messages.first() {
+            Some(Message::System { content }) => Some(content),
+            _ => None,
+        }
+    }
+
+    pub fn task(&self) -> Option<&str> {
+        match self.messages.get(1) {
+            Some(Message::User { content }) => Some(content),
+            _ => None,
+        }
+    }
+
     pub fn messages(&self) -> &[Message] {
         &self.messages
     }

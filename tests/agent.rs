@@ -65,6 +65,7 @@ async fn run_loop(
             max_turns,
             ..Limits::default()
         },
+        &mut harness::log::Discard,
     )
     .await;
 
@@ -220,6 +221,7 @@ async fn a_large_result_is_shaped_before_it_is_sent() {
             max_turns: 4,
             max_observation_bytes: 1_000,
         },
+        &mut harness::log::Discard,
     )
     .await
     .unwrap();

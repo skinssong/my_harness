@@ -9,8 +9,13 @@
 //! * A tool result goes back as an observation whatever happened — including a
 //!   time-out or arguments that did not parse. Only a broken provider response
 //!   ends the run, and that error comes from the client.
+//!
+//! Every turn is recorded before it is acted on, so a run that dies mid-tool
+//! still leaves the reply that asked for it.
 
 use crate::client::{Client, Error as ClientError};
+use crate::event::{Event, LoggedCall};
+use crate::log::{LogError, Recorder};
 use crate::message::Message;
 use crate::reply::{Reply, Usage};
 use crate::request::Request;
@@ -43,6 +48,8 @@ pub struct Outcome {
 pub enum Error {
     #[error("{0}")]
     Client(#[from] ClientError),
+    #[error("{0}")]
+    Log(#[from] LogError),
     #[error("no answer after {turns} turns ({input} in · {output} out)")]
     TurnsExceeded {
         turns: u32,
@@ -51,33 +58,80 @@ pub enum Error {
     },
 }
 
+/// What a reply means for the loop, separated from how the reply was obtained.
+/// Replay judges a recorded reply with the same function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Decision {
+    Act {
+        calls: Vec<crate::message::ToolCall>,
+        text: Option<String>,
+    },
+    Answer {
+        text: String,
+    },
+}
+
+pub fn decide(reply: Reply) -> Decision {
+    match reply {
+        Reply::Answer { text, .. } => Decision::Answer { text },
+        Reply::Calling { calls, text, .. } => Decision::Act { calls, text },
+    }
+}
+
 pub async fn run(
     client: &Client,
     registry: &Registry,
     workspace: &Workspace,
     request: Request,
     limits: Limits,
+    recorder: &mut dyn Recorder,
 ) -> Result<Outcome, Error> {
+    recorder.record(Event::Start {
+        model: request.model().to_string(),
+        system: request.system().unwrap_or_default().to_string(),
+        task: request.task().unwrap_or_default().to_string(),
+        max_turns: limits.max_turns,
+    })?;
+
     let mut request = request;
     let mut spent = Usage::new(0, 0);
 
     for turn in 1..=limits.max_turns {
         let reply = client.complete(&request).await?;
-        spent = spent.plus(reply.usage());
+        let usage = reply.usage();
+        spent = spent.plus(usage);
 
-        match reply {
-            Reply::Answer { text, .. } => {
+        recorder.record(Event::Reply {
+            text: reply.text().map(str::to_string),
+            calls: reply.calls().iter().map(LoggedCall::from).collect(),
+            input: usage.input(),
+            output: usage.output(),
+        })?;
+
+        match decide(reply) {
+            Decision::Answer { text } => {
+                recorder.record(Event::Answer {
+                    text: text.clone(),
+                    turns: turn,
+                })?;
                 return Ok(Outcome {
                     answer: text,
                     usage: spent,
                     turns: turn,
-                })
+                });
             }
-            Reply::Calling { calls, text, .. } => {
+            Decision::Act { calls, text } => {
                 let mut messages = vec![Message::calling(calls.clone(), text)];
                 for call in &calls {
                     let observed = registry.dispatch(call, workspace).await;
                     let shaped = observed.shaped(limits.max_observation_bytes);
+                    recorder.record(Event::Tool {
+                        call_id: call.id.clone(),
+                        name: call.name.clone(),
+                        ok: shaped.ok,
+                        bytes: shaped.text.len(),
+                        text: shaped.text.clone(),
+                    })?;
                     messages.push(Message::tool_result(
                         call.id.clone(),
                         call.name.clone(),
@@ -89,6 +143,10 @@ pub async fn run(
         }
     }
 
+    recorder.record(Event::Halt {
+        reason: format!("no answer after {} turns", limits.max_turns),
+        turns: limits.max_turns,
+    })?;
     Err(Error::TurnsExceeded {
         turns: limits.max_turns,
         input: spent.input(),
