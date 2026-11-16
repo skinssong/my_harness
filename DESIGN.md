@@ -20,6 +20,8 @@ Diagrams are cumulative. **Grey** blocks were built in an earlier phase and are 
 
 Only S1–S3 have detailed diagrams. S4–S7 are stated as requirements, with their building blocks deliberately undesigned — they get diagrams when we reach them.
 
+Every diagram carries an explicit pixel size, applied by [`diagrams/size.py`](diagrams/size.py) after rendering: mermaid otherwise leaves the size to the container, which draws small in a narrow column. Re-rendering resets it, so run the script again afterwards; any `.svg` opens at full size on its own.
+
 **Three phases are amber.** S3 extracts the loop's decisions so they can be replayed; S5 adds suspension to the driver; S6 makes it re-entrant. Each is a small, local change — but a change, and marking it is the honest drawing.
 
 **There are no rebuild-from-scratch phases.** Every later phase is drawn as additions with, at most, one amber block.
