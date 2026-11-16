@@ -1,6 +1,6 @@
 # Rust agent harness — design
 
-**Status:** design only. No code yet. S1 is the next step.
+**Status:** S1–S3 built and running; S4 and S5 designed; S6 and S7 deliberately open.
 
 ## Context
 
@@ -18,7 +18,7 @@ The eval rig is drawn beside the spine rather than on it: it is required by the 
 
 Diagrams are cumulative. **Grey** blocks were built in an earlier phase and are unchanged; **green** blocks are new in this phase; **amber** marks an existing block whose *shape* changes.
 
-Only S1–S3 have detailed diagrams. S4–S7 are stated as requirements, with their building blocks deliberately undesigned — they get diagrams when we reach them.
+Every phase has its own document. S1–S3 are built and carry diagrams of what exists; S4 and S5 are designed with a worked data flow but no code; S6 and S7 are open, with their blocks deliberately undesigned.
 
 Every diagram carries an explicit pixel size, applied by [`diagrams/size.py`](diagrams/size.py) after rendering: mermaid otherwise leaves the size to the container, which draws small in a narrow column. Re-rendering resets it, so run the script again afterwards; any `.svg` opens at full size on its own.
 
@@ -50,91 +50,20 @@ It is not a schedule. The phases cannot usefully be reordered or skipped — eac
 
 ---
 
-## S1 — one prompt in, one answer out, cost known
+## Phases
 
-**Requirement.** Send a prompt to a model, get a reply, report the token usage.
+Each phase has one document: the requirement, why the previous phase could not meet it, how the data moves through it, and how it is checked.
 
-**Why.** Everything after assumes a reliable round trip with typed messages and a known cost. Without usage numbers there is no budget, and without a budget the S2 loop cannot be stopped.
+| Phase | Requirement | Status |
+|---|---|---|
+| [S1](docs/01-s1-call.md) | one prompt in, one answer out, cost known | **built** |
+| [S2](docs/02-s2-tools.md) | the model acts, observes, continues | **built** |
+| [S3](docs/03-s3-record.md) | explain and reproduce any run, offline | **built** |
+| [S4](docs/04-s4-context.md) | keep a long task inside the window | designed, not built |
+| [S5](docs/05-s5-permissions.md) | bound what the agent may do unasked | designed, not built |
+| [S6, S7](docs/06-s6-s7-open.md) | compose and measure; extend without rebuilding | open |
 
-**Required.** A request/response shape the rest of the code can hold; credentials from the environment with a provider-neutral base URL and model; one HTTP call; one error path; a surface that prints the answer and the cost.
-
-**Absent on purpose:** memory, tools, loops, retries, logging.
-
-**Where the envelope lives.** `Request` says what is asked; the adapter says how to say it — field names, the temperature constant, and whatever headers a gateway demands to be talked to at all. Provider quirks stay out of the domain, which is why `Request` has no `body()` and the wire shape is private to the client.
-
-![S1: one call](diagrams/s1-call.svg)
-
-*Source: [diagrams/s1-call.mmd](diagrams/s1-call.mmd)*
-
-The same path as data, showing where the domain stops and the adapter begins:
-
-![S1: dataflow](diagrams/s1-dataflow.svg)
-
-*Source: [diagrams/s1-dataflow.mmd](diagrams/s1-dataflow.mmd)*
-
----
-
-## S2 — the model acts, observes, continues
-
-**Requirement.** Let the model request an action, see the result, and continue until it answers or exhausts its turns.
-
-**Why.** At S1 the model can only talk. The moment it can ask for a file to be read, one round trip is not enough — the next reply depends on a result that does not exist yet. That is what makes it an agent, and it needs a loop.
-
-**Required.** A tool contract (name, description, argument shape, execution) whose argument shape is machine-readable, because it is sent to the model as the calling convention; a dispatcher; the loop; a turn ceiling; and bounded results — a command that prints megabytes will blow the next request's budget and bury the useful line, so shaping is a requirement of the loop, not a nicety.
-
-**Two seams that cost nothing now.** One chokepoint for every action, and results kept whole with a shaped copy sent. S5 and S4 attach to those instead of rewriting tools and record formats. Drawing the seams is not forward-looking scaffolding; it is the difference between a dispatcher and four tools each doing their own thing.
-
-### What the wire forces — amended after walking a read-file exchange
-
-S1's types assumed a conversation made of plain text. A tool turn is not that. Four shapes travel under one `role` field:
-
-| Message | Fields present |
-|---|---|
-| `system` | `content` |
-| `user` | `content` |
-| `assistant`, when calling | `content: null`, `tool_calls: [...]` |
-| `tool` | `content`, `tool_call_id`, `name` |
-
-So `Message` becomes an enum, and the impossible state — an assistant message with neither text nor calls — stops being representable:
-
-```rust
-pub enum Message {
-    System(String),
-    User(String),
-    Assistant { text: Option<String>, calls: Vec<ToolCall> },
-    Tool { call_id: String, name: String, content: String },
-}
-```
-
-**`Reply` must stop requiring text.** S1 rejects a reply with no `content`, which is correct when every reply is an answer and wrong here: a tool-calling reply carries `"content": null`. Left alone, that check turns every tool turn into `NoContent` and the loop never starts. The rule becomes **text or calls, never neither**, and `Reply` gains `calls: Vec<ToolCall>`.
-
-**Two parse boundaries, not one.** The body is parsed once where it enters. Each `tool_call.function.arguments` is then a *string containing JSON*, parsed a second time into that tool's argument type. Only the first parse is fatal — it means the provider broke its own contract. A failure at the second becomes an observation the model can correct (`tool_error: arguments are not valid JSON: …`), because a malformed call is a behaviour to recover from, not a reason to abort a run.
-
-**A turn may carry several calls.** One model call can return N calls; each yields its own `role: "tool"` message keyed by `tool_call_id`, then a single further call. The id is the only thing linking a result to its question.
-
-**The loop decides on "are there calls?", not on `finish_reason`.** Providers disagree on that field's value when calls are present; presence of calls is what the message says.
-
-**The turn ceiling counts model calls**, not tool executions — otherwise a batch of four calls consumes four turns and the ceiling stops meaning what it says.
-
-**Usage accumulates.** S1 reports one call's price; S2 reports a run's, summed over every call the loop makes.
-
-Three files change: `request.rs` (`Message` becomes an enum and absorbs `Role`), `reply.rs` (carries calls; `NoContent` becomes `Empty`, meaning neither text nor calls), and a new tool module for the contract and the chokepoint. `config.rs`, the transport in `client.rs` and the shape of `main.rs` do not.
-
-![S2: tools and the loop](diagrams/s2-tools.svg)
-
-*Source: [diagrams/s2-tools.mmd](diagrams/s2-tools.mmd)*
-
-**Built** *(2026-11-16)*. The contract, the four tools, the chokepoint and the loop, plus the registry edge into the client that the diagram now shows. Where the implementation departs from the paragraphs above:
-
-- the ceiling defaults to **8 model calls** (`--max-turns N`), and the workspace defaults to the current directory (`--workspace DIR`)
-- arguments are validated by deserialising into the tool's `Args`, so a shape mismatch is an observation in the same way bad JSON is — one rule, not two
-- an observation is shaped to **8 KiB**, head and tail kept with the elided count stated; the full text never leaves the tool, which is what makes S3's "keep results whole" a record concern rather than a memory one
-- **`bash` is not sandboxed.** `read_file`, `write_file` and `list_dir` resolve paths lexically and refuse `..` and absolute paths, but a shell can leave the root. Bounding it is S5's job
-- **no retries.** A transport failure still ends the run; retry policy needs the budget S3 introduces
-
-Live evidence: the model created `greeting.txt`, read it back and answered in three turns (2,532 in · 113 out), and `--max-turns 1` halted after one call with the spend reported.
-
-### Structs, and what crosses between them
+## Structs, and what crosses between them
 
 Boxes act; every arrow is labelled with the value that crosses it. `main` builds a `Config` and the tools array once, hands a `Request` and `Limits` to the loop, and prints the `Outcome`. The loop sends a `Request` per turn, receives a `Reply`, and either stops or turns that reply's `ToolCall` into an `Observation` by way of the registry.
 
@@ -159,80 +88,7 @@ Three carriers are worth a second look. `Reply` is data, but its variant is what
 
 ---
 
-## S3 — explain and reproduce any run, offline
-
-**Requirement.** Re-drive a past run from its record, with no network, and get the same transcript and the same spend.
-
-**Why.** At S2 a run is a live side effect. When it misbehaves at turn nine you cannot go back and look — the state was in memory and the model is non-deterministic — so debugging means re-running and hoping. The record is also the thing the course grades: no record, no evaluation.
-
-**Required.** An append-only record of every turn, holding enough to reconstruct the next decision; a replay path that re-drives the same decisions with the model and tools stubbed; a budget denominated in money, because a loop can be cheap per turn and ruinous in total; and a repetition guard, because identical action followed by identical result means stuck, and a turn ceiling will not catch it before the budget is gone.
-
-**This is the first amber phase.** Replay requires the loop's decisions to be available without performing them, so the S2 loop body splits into a pure "what next" and an async "do it". Localised, but not free.
-
-![S3: record and replay](diagrams/s3-record.svg)
-
-*Source: [diagrams/s3-record.mmd](diagrams/s3-record.mmd)*
-
-**Done looks like:** a task runs, the log is noted, the network is disconnected, the log replays to an identical transcript and identical spend; then `inspect` shows the turn where it went wrong.
-
-**Built** *(2026-11-16)*. The record, replay, the money budget and the stuck detector.
-
-- **Record**: one JSON object per line, flushed per event, so a run that dies at turn nine leaves nine turns. The loop takes a `Recorder`, so it never branches on whether it is being kept. It lives at `~/.harness/runs` by default — outside the workspace, because a record the tools can reach is not an audit trail; a `--log` inside the workspace is warned about rather than refused.
-- **Replay**: rebuilds each reply from the record, runs it through the same `decide` the live loop uses, and checks the recorded effects match — the right tools, in the right order, ending in the same answer and the same turn count. It calls nothing and touches nothing.
-- **Budget**: `--max-usd`, priced from `LLM_PRICE_IN` and `LLM_PRICE_OUT` (dollars per million tokens, both or neither). Checked *before* acting, so passing the budget does not also run tools.
-- **Stuck**: the same call, arguments and result `--stuck-after` times in a row (default 3, 0 disables) ends the run. Whole turns are compared, so a model alternating between two states is not caught — a known limit.
-
-Two gaps worth naming. Replay re-derives the *decisions* but not the *reason* a run halted: a budget or stuck stop is recorded with its reason and replayed by turn count alone, because recomputing it would need the limits and prices. And `inspect`, promised above, does not exist — the record is JSONL and greppable, which is not the same thing.
-
-Live evidence: a three-turn run recorded eight events and replayed offline — provider settings removed from the environment — to the same answer and the same 2,605 in · 142 out. A run with `--max-usd 0.000001` stopped after its first call: `spent $0.000236 of a $0.000001 budget`, record written, exit 1.
-
-S1–S3 is the minimum "I understand harnesses" set.
-
----
-
-## S4 — keep a long task inside the window
-
-**Requirement.** A task that outlives the model's context still finishes coherently.
-
-**Why.** The S3 record grows monotonically; eventually every request is too large, and quality degrades well before the hard limit. The record cannot be truncated because S3 needs it — so the prompt must become a *projection* of the record, with a rule for what falls out and what stands in for it.
-
-**Required.** A projection from record to prompt (seeded at S2 by keeping results whole), a trigger, and a policy for eliding or summarising. Rule-based first, model-summarised second: rules are cheaper to debug.
-
-*Building blocks not designed yet.*
-
-## S5 — bound what the agent may do unasked
-
-**Requirement.** No side-effecting action happens unless policy allows it; an action needing approval can pause and resume.
-
-**Why.** The tools write and execute. Once the loop is trustworthy enough to leave running, the risk moves from correctness to blast radius.
-
-**Required.** The S2 chokepoint becomes policy-aware; a suspension state that can be persisted and resumed; a filesystem boundary. **Expected amber on the driver**, which gains a stop-mid-run path. Permissions must not live inside individual tools — that is why the chokepoint existed from the start.
-
-*Building blocks not designed yet.*
-
-## S6 — compose
-
-**Requirement.** Sub-tasks run without contaminating the main context, reusable procedures load on demand, and a task suite can be run and graded.
-
-**Why.** S4 gave you forgetting, but forgetting is blunt and global: compaction drops old detail uniformly, whether or not the task still needs it. A long task contains self-contained sub-problems — explore this directory, debug that failing test — whose intermediate work matters to *them* and is noise to the main thread. What's missing is scoping, not forgetting. The same shape applies to procedures: with nothing that a model can look up on demand, everything it might ever need has to be carried in the prompt simultaneously, which both costs tokens and dilutes attention.
-
-**Required.** An isolation boundary returning a summary rather than a transcript; a procedure file the model discovers rather than carries. **Expected amber on the driver**, which becomes re-entrant.
-
-*Building blocks not designed yet.*
-
-## S7 — extend without rebuilding
-
-**Requirement.** New tools arrive over a protocol rather than as compiled-in code.
-
-**Why.** S2's tools are compiled in, so every new capability means editing Rust and shipping a release. Nothing about the tool contract requires that — a name, a description and a schema can be delivered at runtime just as easily as at compile time.
-
-**Required.** A protocol client, and a projection from remote tools into S2's contract. If S2's contract was drawn well, nothing else changes.
-
-*Building blocks not designed yet.*
-
----
-
-## The eval rig — a parallel track, not a phase
+## The eval rig — a parallel track
 
 **Requirement.** Run the harness over a set of tasks, grade the results, and compare against a weaker configuration.
 
@@ -253,23 +109,18 @@ Cheap now, expensive later.
 1. **The record is the state.** Transcript, turn count and spend are derived from it. A mutable transcript plus a separate log gives two sources of truth, and replay drifts.
 2. **Tool failure is an observation; transport failure is an error.** A tool that times out must be seen by the model as a result it can react to; a 502 must abort the run. Never convert one into the other.
 3. **One chokepoint for execution.** Every action passes through one function that validates, checks permission, runs, shapes and records. S3's recording and S5's permissions attach to that seam rather than being retrofitted into each tool.
+4. **The record lives outside the workspace.** `~/.harness/runs` by default. A record the tools can reach is not an audit trail — a live run listed its own log directory, which is how this got noticed. `--log` inside the workspace still works and warns, because keeping records beside a throwaway sandbox is a legitimate choice; `bash` can reach the default anyway, so this is placement, not a boundary.
 
 ## Toolchain
 
 - Toolchain in use: **rustc 1.100.0**, `edition = "2021"`.
 - Dependencies, all of them: `tokio` (runtime, process, fs, time), `reqwest` (rustls, so no OpenSSL), `serde`/`serde_json`, `thiserror`, `dotenvy`, and — added at S2 — `schemars` for schemas derived from types, and `async-trait` so one registry can hold unlike tools.
-- The crate is its own git repository; S1 and S2 are committed.
+- The crate is its own git repository; S1–S3 are committed.
 
 ## Model access
 
-OpenAI-compatible HTTP. `LLM_API_KEY` → `DEEPSEEK_API_KEY` → `OPENAI_API_KEY`; base URL from `LLM_BASE_URL` (default `https://api.deepseek.com/v1`); model from `LLM_MODEL` (default `deepseek-chat`).
+OpenAI-compatible HTTP, three settings and no inference: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, all required. Optional `LLM_PRICE_IN` and `LLM_PRICE_OUT` — dollars per million tokens, both or neither — are what make a money budget computable.
 
-Tool-calling quality is model-dependent. A weak model produces malformed calls, which usefully exercises the error path but slows development; the client stays provider-neutral so a stronger endpoint is an environment variable away.
+The client is provider-neutral: any endpoint that speaks `/chat/completions` with a `tools` array works. That is how the harness moved from a provider's own API to an OpenAI-compatible gateway without a code change, and why S1's two gateway quirks — a required `User-Agent`, a required session header — live in the adapter rather than in the domain.
 
-## Verification, per phase
-
-- **S1:** one prompt, one reply, tokens reported, exit 0. *Met live: `ok`, 44 in · 13 out.*
-- **S2:** a file round trip in three turns; a forced one-turn ceiling halts cleanly; a megabyte of command output is elided, not sent; a tool-calling reply with `content: null` is accepted; a malformed `arguments` string comes back as an observation rather than an abort. *Met: the round trip and the ceiling live; the rest by test — a 20 KB observation arrives under 5 KB on the wire.*
-- **S3:** replay a recorded run with the network down; transcript and spend identical. *Met, plus the ceiling, the money budget and the stuck detector each end a run with a recorded reason.*
-
-Unit tests target the pure parts — the reducer, the decision function, the stuck detector, shaping — with no network and no key.
+Tool-calling quality is model-dependent. A weak model produces malformed calls, which usefully exercises the error path but slows development.

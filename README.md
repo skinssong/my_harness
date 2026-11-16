@@ -6,8 +6,8 @@ it stops — is this program.
 
 Phases so far: **S1** one call and its cost. **S2** tools, a chokepoint and the
 loop. **S3** a record of every run, replay of that record, a money budget and a
-stuck detector. The design, including the reasoning for each phase, is in
-[DESIGN.md](DESIGN.md).
+stuck detector. **S4** and **S5** are designed but not built. The design has one
+document per phase under [docs/](docs/), indexed by [DESIGN.md](DESIGN.md).
 
 ## Run it
 
