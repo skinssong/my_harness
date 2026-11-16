@@ -138,6 +138,8 @@ Live evidence: the model created `greeting.txt`, read it back and answered in th
 
 Boxes act; every arrow is labelled with the value that crosses it. `main` builds a `Config` and the tools array once, hands a `Request` and `Limits` to the loop, and prints the `Outcome`. The loop sends a `Request` per turn, receives a `Reply`, and either stops or turns that reply's `ToolCall` into an `Observation` by way of the registry.
 
+Grey is what S1 and S2 built; green is what S3 added. The loop hands every turn to `Log` as an `Event`, and `replay()` gets the file back as a `Vec<Event>` and judges each recorded reply with the same `decide()` the live loop uses — the dashed edge. It borrows the loop's judgement without running the loop, which is why replay can catch a change in behaviour rather than merely reprint a transcript.
+
 ![Structs and the values between them](diagrams/structs.svg)
 
 *Source: [diagrams/structs.mmd](diagrams/structs.mmd)*
@@ -149,9 +151,11 @@ Boxes act; every arrow is labelled with the value that crosses it. `main` builds
 | `Client` | one HTTP POST |
 | `Registry` | finding, validating and running a call |
 | the four tools | touching the filesystem and the shell |
+| `Log` | appending events, and reading them back |
+| `replay()` | re-deriving decisions, calling nothing |
 | the provider | not ours |
 
-Two carriers are worth a second look. `Reply` is data, but its variant is what the loop branches on — an enum doing control's job. `Observation.ok` is the reverse: the loop never reads it, only the model does, which is why a failed tool cannot stop a run by accident.
+Three carriers are worth a second look. `Reply` is data, but its variant is what the loop branches on — an enum doing control's job. `Observation.ok` is the reverse: the loop never reads it, only the model does, which is why a failed tool cannot stop a run by accident. And `Limits` started as two numbers and now carries the prices as well, because a money budget is meaningless without a rate to convert tokens into dollars — a carrier that grew a second purpose rather than gaining a sibling.
 
 ---
 

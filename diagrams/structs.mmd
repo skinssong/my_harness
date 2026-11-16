@@ -1,23 +1,32 @@
 flowchart TB
-    MAIN["main<br/>parses, builds, prints"]:::actor
-    LOOP["agent::run<br/>decides the next step"]:::actor
-    CLIENT["Client<br/>one POST"]:::actor
-    REG["Registry<br/>finds, validates, runs"]:::actor
-    TOOLS["ReadFile · ListDir<br/>WriteFile · Bash<br/>(one chosen per call)"]:::actor
+    MAIN["main<br/>parses, builds, prints"]:::old
+    LOOP["agent::run<br/>decides the next step"]:::old
+    CLIENT["Client<br/>one POST"]:::old
+    REG["Registry<br/>finds, validates, runs"]:::old
+    TOOLS["ReadFile · ListDir<br/>WriteFile · Bash"]:::old
+
+    LOG["Log<br/>writes, reads the record"]:::new
+    REPLAY["replay()<br/>re-derives a run"]:::new
+
     PROV["provider<br/>not ours"]:::external
 
     MAIN -->|"Request · Limits"| LOOP
-    MAIN -->|"Config · tools<br/>(once, at construction)"| CLIENT
+    MAIN -->|"Config · tools<br/>at build"| CLIENT
     LOOP -->|"Request"| CLIENT
-    CLIENT -->|"Wire {model, messages, temperature, tools}"| PROV
-    PROV -->|"response bytes"| CLIENT
+    CLIENT -->|"Wire {model, messages, tools}"| PROV
+    PROV -->|"bytes"| CLIENT
     CLIENT -->|"Reply"| LOOP
     LOOP -->|"ToolCall"| REG
     REG -->|"Args · &Workspace"| TOOLS
     TOOLS -->|"Observation"| REG
     REG -->|"Observation, shaped"| LOOP
-    REG -->|"Vec&lt;Value&gt; — the tools array"| MAIN
+    REG -->|"Vec&lt;Value&gt; tools"| MAIN
     LOOP -->|"Outcome"| MAIN
 
-    classDef actor fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
+    LOOP -->|"Event"| LOG
+    LOG -->|"Vec&lt;Event&gt;"| REPLAY
+    REPLAY -. "decide()" .-> LOOP
+
+    classDef old fill:#ECEFF1,stroke:#90A4AE,color:#37474F
+    classDef new fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
     classDef external fill:#F5F5F5,stroke:#9E9E9E,color:#424242,stroke-dasharray: 4 3
