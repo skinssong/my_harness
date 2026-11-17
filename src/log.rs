@@ -75,6 +75,19 @@ impl Log {
         &self.path
     }
 
+    /// A record that already exists, opened to append. `resume` continues one
+    /// run rather than starting a second file beside it.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, LogError> {
+        let path = path.as_ref().to_path_buf();
+        let file = OpenOptions::new().append(true).open(&path).map_err(|err| {
+            LogError::Open {
+                path: path.display().to_string(),
+                reason: err.to_string(),
+            }
+        })?;
+        Ok(Self { path, file })
+    }
+
     pub fn append(&mut self, event: &Event) -> Result<(), LogError> {
         let line = serde_json::to_string(event).map_err(|err| LogError::Write(err.to_string()))?;
         writeln!(self.file, "{line}").map_err(|err| LogError::Write(err.to_string()))?;

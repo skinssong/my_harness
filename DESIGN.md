@@ -1,6 +1,6 @@
 # Rust agent harness — design
 
-**Status:** S1–S4 built and running; S5 designed; S6 and S7 deliberately open.
+**Status:** S1–S5 built and running; S6 and S7 deliberately open.
 
 ## Context
 
@@ -18,7 +18,7 @@ The eval rig is drawn beside the spine rather than on it: it is required by the 
 
 Diagrams are cumulative. **Grey** blocks were built in an earlier phase and are unchanged; **green** blocks are new in this phase; **amber** marks an existing block whose *shape* changes; a **red dotted** edge is a connection the phase removes.
 
-Every phase has its own document, and every phase document carries the whole system drawn at that phase — directly on top of the one before it, so the difference *is* the phase. S1–S4 are built; S5 is designed with a worked data flow but no code; S6 and S7 are open, with their blocks deliberately undesigned.
+Every phase has its own document, and every phase document carries the whole system drawn at that phase — directly on top of the one before it, so the difference *is* the phase. S1–S5 are built; S6 and S7 are open, with their blocks deliberately undesigned.
 
 Every diagram is rendered from its `.mmd` source by [`diagrams/build.sh`](diagrams/build.sh), which then applies [`diagrams/size.py`](diagrams/size.py): mermaid otherwise leaves the size to the container, which draws small in a narrow column. Edit the source, run the script, and the SVG matches what was drawn. Any `.svg` also opens at full size on its own.
 
@@ -60,7 +60,7 @@ Each phase has one document: the requirement, why the previous phase could not m
 | [S2](docs/02-s2-tools.md) | the model acts, observes, continues | **built** |
 | [S3](docs/03-s3-record.md) | explain and reproduce any run, offline | **built** |
 | [S4](docs/04-s4-context.md) | keep a long task inside the window | **built** |
-| [S5](docs/05-s5-permissions.md) | bound what the agent may do unasked | designed, not built |
+| [S5](docs/05-s5-permissions.md) | bound what the agent may do unasked | **built** |
 | [S6, S7](docs/06-s6-s7-open.md) | compose and measure; extend without rebuilding | open |
 
 ## Structs, and what crosses between them
@@ -79,7 +79,7 @@ The drawing is cumulative, and it lives in the phase documents — one per phase
 
 Read any one on its own: grey is what earlier phases built, green is what that phase adds, amber is an existing block whose shape changes, red dotted is a connection it removes. No phase is a redraw.
 
-S5 is designed rather than built, so its green and amber describe intent, not a commit. `project()` is green in S4 and grey in S5 because by then it is part of the system the later phase builds on.
+Every phase is drawn from what was built, so the colours describe commits rather than intentions.
 
 | Actor | Acts by |
 |---|---|
@@ -116,9 +116,10 @@ Three carriers are worth a second look. `Reply` is data, but its variant is what
 Cheap now, expensive later.
 
 1. **The record is the state.** Transcript, turn count and spend are derived from it. A mutable transcript plus a separate log gives two sources of truth, and replay drifts.
-2. **Tool failure is an observation; transport failure is an error.** A tool that times out must be seen by the model as a result it can react to; a 502 must abort the run. Never convert one into the other.
-3. **One chokepoint for execution.** Every action passes through one function that validates, checks permission, runs, shapes and records. S3's recording and S5's permissions attach to that seam rather than being retrofitted into each tool.
+2. **Tool failure is an observation; transport failure ends the run.** A tool that times out must be seen by the model as a result it can react to; a 502 must stop the run. Never convert one into the other. Since S5 the second one is `Halt::Provider` rather than an error, because from the caller's side it is an ending like any other — but it stays a distinct one, so the blame is not lost.
+3. **One chokepoint for execution.** Every action passes through one function that validates, runs, shapes and records. S3's recording attaches to that seam rather than being retrofitted into each tool. S5's permission gate sits *before* the loop calls it, because "may this run" is a question about the run, and a resumed run has to answer it from a record instead of asking again.
 4. **The record lives outside the workspace.** `~/.harness/runs` by default. A record the tools can reach is not an audit trail — a live run listed its own log directory, which is how this got noticed. `--log` inside the workspace still works and warns, because keeping records beside a throwaway sandbox is a legitimate choice; `bash` can reach the default anyway, so this is placement, not a boundary.
+5. **A run has four endings, and only one of them is an error.** Answered, halted by a rule, waiting for a decision, or the harness failed at its own bookkeeping. The first three are `Ok`; the record stores the same `Halt` value the caller receives, so the file and the return value cannot describe different things.
 
 ## Toolchain
 

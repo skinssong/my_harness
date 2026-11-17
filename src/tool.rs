@@ -167,6 +167,12 @@ impl Registry {
             .collect()
     }
 
+    /// Whether a tool of this name is registered. The gate asks before it asks
+    /// for permission, so an unknown name gets the registry's own answer.
+    pub fn knows(&self, name: &str) -> bool {
+        self.tools.iter().any(|tool| tool.name() == name)
+    }
+
     /// Run one call. Returns an observation whatever happens.
     pub async fn dispatch(&self, call: &ToolCall, workspace: &Workspace) -> Observation {
         if call.id.trim().is_empty() {

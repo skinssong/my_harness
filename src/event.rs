@@ -73,32 +73,65 @@ pub enum Event {
         bytes: usize,
         text: String,
     },
+    /// A call the policy would not let through unasked. The run stops here,
+    /// before the call has done anything.
+    ApprovalRequested {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    /// The decision an operator made about it, in a later process.
+    ApprovalDecided {
+        call_id: String,
+        approved: bool,
+    },
     Answer {
         text: String,
         turns: u32,
     },
-    Halt {
-        reason: String,
-        turns: u32,
-        /// Which rule stopped the run. Optional because records written before
-        /// S3's review carry only the reason, and replay must still read them.
-        #[serde(default)]
-        rule: Option<HaltRule>,
-    },
+    /// How the run ended when it did not answer. The value the loop returns and
+    /// the value written here are the same type, so they cannot drift.
+    Halt(Halt),
 }
 
-/// The loop has four ways to stop without an answer, and replay checks a
-/// recorded halt against the limits the run started with. A reason string could
-/// not be compared; this can.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HaltRule {
-    /// The turn ceiling.
-    Ceiling,
-    /// The money budget.
-    Budget,
-    /// The same call and result repeating.
-    Stuck,
-    /// The provider stopped answering.
-    Transport,
+/// Why a run stopped without an answer.
+///
+/// These are not failures. Three of them are the harness working as configured,
+/// and the fourth is the provider — which the caller still needs, because it is
+/// the difference between "we stopped it" and "it broke".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "rule", rename_all = "snake_case")]
+pub enum Halt {
+    /// The turn ceiling: no answer within the calls allowed.
+    Ceiling { turns: u32 },
+    /// The money budget was passed.
+    Budget {
+        turns: u32,
+        spent: f64,
+        cap: f64,
+    },
+    /// The same call and result kept repeating.
+    Stuck { turns: u32, repeats: u32 },
+    /// The provider stopped answering, or answered with something unreadable.
+    Provider { turns: u32, detail: String },
+}
+
+impl std::fmt::Display for Halt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ceiling { turns } => write!(f, "no answer after {turns} turn(s)"),
+            Self::Budget { turns, spent, cap } => write!(
+                f,
+                "spent ${spent:.6} of a ${cap:.6} budget after {turns} turn(s)"
+            ),
+            Self::Stuck { turns, repeats } => write!(
+                f,
+                "the same call and result repeated {repeats} time(s) in a row, \
+                 at turn {turns}"
+            ),
+            Self::Provider { turns, detail } => {
+                write!(f, "the provider stopped answering after {turns} turn(s): {detail}")
+            }
+        }
+    }
 }

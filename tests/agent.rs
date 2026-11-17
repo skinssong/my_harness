@@ -7,10 +7,11 @@ mod common;
 
 use common::{config_at, response, serve_many, TempWorkspace};
 
-use harness::agent::{self, Error, Limits};
+use harness::agent::{self, Ending, Error, Limits};
 use harness::config::Prices;
-use harness::event::Event;
+use harness::event::{Event, Halt};
 use harness::log::Log;
+use harness::policy::Permission;
 use harness::{Client, Request, Workspace};
 
 fn calling(calls: &[(&str, &str, &str)], usage: (u32, u32)) -> String {
@@ -44,10 +45,18 @@ fn answering(text: &str, usage: (u32, u32)) -> String {
     )
 }
 
+/// A run that answered, or a panic naming what it did instead.
+fn answered(ending: Result<Ending, Error>) -> agent::Outcome {
+    match ending.expect("the harness itself should not fail") {
+        Ending::Answered(outcome) => outcome,
+        other => panic!("expected an answer, got {other:?}"),
+    }
+}
+
 async fn run_loop(
     replies: Vec<String>,
     max_turns: u32,
-) -> (Result<agent::Outcome, Error>, Vec<String>, TempWorkspace) {
+) -> (Result<Ending, Error>, Vec<String>, TempWorkspace) {
     run_loop_with(
         replies,
         Limits {
@@ -61,7 +70,7 @@ async fn run_loop(
 async fn run_loop_with(
     replies: Vec<String>,
     limits: Limits,
-) -> (Result<agent::Outcome, Error>, Vec<String>, TempWorkspace) {
+) -> (Result<Ending, Error>, Vec<String>, TempWorkspace) {
     let (addr, seen) = serve_many(replies).await;
     let workspace_dir = TempWorkspace::new("loop");
     std::fs::write(workspace_dir.path.join("a.txt"), "hello from disk\n").unwrap();
@@ -73,23 +82,23 @@ async fn run_loop_with(
         .with_tools(registry.specs());
     let request = Request::new("m", "be brief", "what does a.txt say?").unwrap();
 
-    let outcome = agent::run(
+    let ending = agent::run(
         &client,
         &registry,
         &workspace,
         request,
-        limits,
+        &limits,
         &mut harness::log::Discard,
     )
     .await;
 
     let seen = seen.await.unwrap();
-    (outcome, seen, workspace_dir)
+    (ending, seen, workspace_dir)
 }
 
 #[tokio::test]
 async fn a_tool_call_is_dispatched_and_its_result_goes_back_to_the_model() {
-    let (outcome, seen, _dir) = run_loop(
+    let (ending, seen, _dir) = run_loop(
         vec![
             calling(&[("call_1", "read_file", r#"{"path":"a.txt"}"#)], (100, 10)),
             answering("it says hello", (200, 20)),
@@ -98,7 +107,7 @@ async fn a_tool_call_is_dispatched_and_its_result_goes_back_to_the_model() {
     )
     .await;
 
-    let outcome = outcome.unwrap();
+    let outcome = answered(ending);
     assert_eq!(outcome.answer, "it says hello");
     assert_eq!(outcome.turns, 2, "one turn to call, one to answer");
     assert_eq!(outcome.usage.input(), 300, "usage accumulates across turns");
@@ -127,7 +136,7 @@ async fn a_tool_call_is_dispatched_and_its_result_goes_back_to_the_model() {
 
 #[tokio::test]
 async fn several_calls_in_one_turn_cost_one_turn() {
-    let (outcome, seen, _dir) = run_loop(
+    let (ending, seen, _dir) = run_loop(
         vec![
             calling(
                 &[
@@ -142,8 +151,7 @@ async fn several_calls_in_one_turn_cost_one_turn() {
     )
     .await;
 
-    let outcome = outcome.unwrap();
-    assert_eq!(outcome.turns, 2, "two calls, still one model turn each way");
+    assert_eq!(answered(ending).turns, 2, "two calls, still one turn each way");
 
     let second = &seen[1];
     assert!(second.contains("\"tool_call_id\":\"c1\""));
@@ -152,7 +160,7 @@ async fn several_calls_in_one_turn_cost_one_turn() {
 
 #[tokio::test]
 async fn the_ceiling_stops_a_model_that_never_answers() {
-    let (outcome, seen, _dir) = run_loop(
+    let (ending, seen, _dir) = run_loop(
         vec![
             calling(&[("c1", "list_dir", "{}")], (10, 1)),
             calling(&[("c2", "list_dir", "{}")], (10, 1)),
@@ -161,12 +169,8 @@ async fn the_ceiling_stops_a_model_that_never_answers() {
     )
     .await;
 
-    match outcome {
-        Err(Error::TurnsExceeded { turns, input, output }) => {
-            assert_eq!(turns, 2);
-            assert_eq!(input, 20);
-            assert_eq!(output, 2);
-        }
+    match ending {
+        Ok(Ending::Halted(Halt::Ceiling { turns })) => assert_eq!(turns, 2),
         other => panic!("expected the ceiling to bite, got {other:?}"),
     }
     assert_eq!(seen.len(), 2, "it stops calling once the ceiling is reached");
@@ -174,7 +178,7 @@ async fn the_ceiling_stops_a_model_that_never_answers() {
 
 #[tokio::test]
 async fn a_malformed_call_is_reported_to_the_model_rather_than_ending_the_run() {
-    let (outcome, seen, _dir) = run_loop(
+    let (ending, seen, _dir) = run_loop(
         vec![
             calling(&[("c1", "read_file", "path=a.txt")], (10, 1)),
             answering("I could not read it", (10, 1)),
@@ -183,7 +187,7 @@ async fn a_malformed_call_is_reported_to_the_model_rather_than_ending_the_run() 
     )
     .await;
 
-    assert_eq!(outcome.unwrap().answer, "I could not read it");
+    assert_eq!(answered(ending).answer, "I could not read it");
     assert!(
         seen[1].contains("not valid JSON"),
         "the model must see why it failed: {}",
@@ -193,7 +197,7 @@ async fn a_malformed_call_is_reported_to_the_model_rather_than_ending_the_run() 
 
 #[tokio::test]
 async fn an_unknown_tool_is_reported_to_the_model() {
-    let (outcome, seen, _dir) = run_loop(
+    let (ending, seen, _dir) = run_loop(
         vec![
             calling(&[("c1", "make_coffee", "{}")], (10, 1)),
             answering("there is no coffee tool", (10, 1)),
@@ -202,7 +206,7 @@ async fn an_unknown_tool_is_reported_to_the_model() {
     )
     .await;
 
-    assert!(outcome.is_ok());
+    assert_eq!(answered(ending).answer, "there is no coffee tool");
     assert!(
         seen[1].contains("no tool named make_coffee"),
         "the model must learn which tools exist: {}",
@@ -225,21 +229,26 @@ async fn a_large_result_is_shaped_before_it_is_sent() {
         .unwrap()
         .with_tools(registry.specs());
     let request = Request::new("m", "s", "run it").unwrap();
+    let limits = Limits {
+        max_turns: 4,
+        max_observation_bytes: 1_000,
+        ..Limits::default()
+    };
+    // The test is about shaping, not the gate; `bash` is asked about by default.
+    let mut limits = limits;
+    limits.policy.set("bash", Permission::Allow);
 
-    let outcome = agent::run(
-        &client,
-        &registry,
-        &workspace,
-        request,
-        Limits {
-            max_turns: 4,
-            max_observation_bytes: 1_000,
-            ..Limits::default()
-        },
-        &mut harness::log::Discard,
-    )
-    .await
-    .unwrap();
+    let outcome = answered(
+        agent::run(
+            &client,
+            &registry,
+            &workspace,
+            request,
+            &limits,
+            &mut harness::log::Discard,
+        )
+        .await,
+    );
 
     assert_eq!(outcome.answer, "done");
     let second = seen.await.unwrap().remove(1);
@@ -265,30 +274,23 @@ async fn a_run_stops_when_it_overspends() {
         .unwrap()
         .with_tools(registry.specs());
     let request = Request::new("m", "s", "look around").unwrap();
+    let limits = Limits {
+        // 110 tokens at $1/M is $0.00011, so the cap is passed on turn one.
+        max_usd: Some(0.00005),
+        prices: Some(Prices {
+            input_per_mtok: 1.0,
+            output_per_mtok: 1.0,
+        }),
+        ..Limits::default()
+    };
 
     let mut log = Log::create(dir.path.join("runs")).unwrap();
     let record = log.path().to_path_buf();
-    let outcome = agent::run(
-        &client,
-        &registry,
-        &workspace,
-        request,
-        Limits {
-            // 110 tokens at $1/M is $0.00011, so the cap is passed on turn one.
-            max_usd: Some(0.00005),
-            prices: Some(Prices {
-                input_per_mtok: 1.0,
-                output_per_mtok: 1.0,
-            }),
-            ..Limits::default()
-        },
-        &mut log,
-    )
-    .await;
+    let ending = agent::run(&client, &registry, &workspace, request, &limits, &mut log).await;
     drop(log);
 
-    match outcome {
-        Err(Error::BudgetExceeded { turns, spent, cap }) => {
+    match ending {
+        Ok(Ending::Halted(Halt::Budget { turns, spent, cap })) => {
             assert_eq!(turns, 1);
             assert!(spent > cap, "spent {spent} should exceed {cap}");
         }
@@ -302,7 +304,7 @@ async fn a_run_stops_when_it_overspends() {
     );
     let events = Log::read(&record).unwrap();
     assert!(
-        matches!(events.last(), Some(Event::Halt { reason, .. }) if reason.starts_with("budget")),
+        matches!(events.last(), Some(Event::Halt(Halt::Budget { .. }))),
         "the record says why it stopped: {events:?}"
     );
     assert!(
@@ -326,27 +328,20 @@ async fn a_run_stops_when_the_same_call_and_result_repeat() {
         .unwrap()
         .with_tools(registry.specs());
     let request = Request::new("m", "s", "look around").unwrap();
+    let limits = Limits {
+        stuck_after: 2,
+        ..Limits::default()
+    };
 
     let mut log = Log::create(dir.path.join("runs")).unwrap();
     let record = log.path().to_path_buf();
-    let outcome = agent::run(
-        &client,
-        &registry,
-        &workspace,
-        request,
-        Limits {
-            stuck_after: 2,
-            ..Limits::default()
-        },
-        &mut log,
-    )
-    .await;
+    let ending = agent::run(&client, &registry, &workspace, request, &limits, &mut log).await;
     drop(log);
 
-    match outcome {
+    match ending {
         // `stuck_after` counts repetitions, so 2 means the third identical
         // turn stops the run: the first is the one being repeated.
-        Err(Error::Stuck { turns, repeats }) => {
+        Ok(Ending::Halted(Halt::Stuck { turns, repeats })) => {
             assert_eq!(turns, 3);
             assert_eq!(repeats, 2);
         }
@@ -354,7 +349,7 @@ async fn a_run_stops_when_the_same_call_and_result_repeat() {
     }
     let events = Log::read(&record).unwrap();
     assert!(
-        matches!(events.last(), Some(Event::Halt { reason, .. }) if reason.starts_with("stuck")),
+        matches!(events.last(), Some(Event::Halt(Halt::Stuck { .. }))),
         "the record says why it stopped: {events:?}"
     );
 }
@@ -377,20 +372,22 @@ async fn a_run_is_not_stuck_when_each_turn_does_something_different() {
         .unwrap()
         .with_tools(registry.specs());
     let request = Request::new("m", "s", "look around").unwrap();
+    let limits = Limits {
+        stuck_after: 2,
+        ..Limits::default()
+    };
 
-    let outcome = agent::run(
-        &client,
-        &registry,
-        &workspace,
-        request,
-        Limits {
-            stuck_after: 2,
-            ..Limits::default()
-        },
-        &mut harness::log::Discard,
-    )
-    .await
-    .expect("different work each turn is not being stuck");
+    let outcome = answered(
+        agent::run(
+            &client,
+            &registry,
+            &workspace,
+            request,
+            &limits,
+            &mut harness::log::Discard,
+        )
+        .await,
+    );
 
     assert_eq!(outcome.turns, 4);
 }
@@ -410,7 +407,7 @@ async fn the_wire_is_masked_but_the_record_is_not() {
     let workspace_dir = TempWorkspace::new("mask");
     std::fs::write(workspace_dir.path.join("a.txt"), "hello from disk\n").unwrap();
     let log_dir = TempWorkspace::new("mask-log");
-    let mut log = harness::log::Log::create(&log_dir.path).unwrap();
+    let mut log = Log::create(&log_dir.path).unwrap();
     let record = log.path().to_path_buf();
 
     let workspace = Workspace::open(&workspace_dir.path).unwrap();
@@ -419,27 +416,23 @@ async fn the_wire_is_masked_but_the_record_is_not() {
         .unwrap()
         .with_tools(registry.specs());
     let request = Request::new("m", "be brief", "what does a.txt say?").unwrap();
-
-    let outcome = agent::run(
-        &client,
-        &registry,
-        &workspace,
-        request,
-        Limits {
-            max_turns: 8,
-            // Small enough that the third request has to lose something.
-            context: harness::ContextPolicy {
-                window: 150,
-                keep_turns: 1,
-                trigger: 0.6,
-                reserved: 0,
-            },
-            ..Limits::default()
+    let limits = Limits {
+        max_turns: 8,
+        // Small enough that the third request has to lose something.
+        context: harness::ContextPolicy {
+            window: 150,
+            keep_turns: 1,
+            trigger: 0.6,
+            reserved: 0,
         },
-        &mut log,
-    )
-    .await;
-    assert!(outcome.is_ok(), "masking must not break the run");
+        ..Limits::default()
+    };
+
+    let ending = agent::run(&client, &registry, &workspace, request, &limits, &mut log).await;
+    assert!(
+        matches!(ending, Ok(Ending::Answered(_))),
+        "masking must not break the run"
+    );
 
     let seen = seen.await.unwrap();
     let third = &seen[2];
@@ -480,25 +473,126 @@ async fn an_answer_is_returned_even_when_it_crosses_the_budget() {
         .unwrap()
         .with_tools(registry.specs());
     let request = Request::new("m", "s", "say something").unwrap();
+    let limits = Limits {
+        // 110 tokens at $1/M is $0.00011, past the cap.
+        max_usd: Some(0.00005),
+        prices: Some(Prices {
+            input_per_mtok: 1.0,
+            output_per_mtok: 1.0,
+        }),
+        ..Limits::default()
+    };
 
-    let outcome = agent::run(
+    let outcome = answered(
+        agent::run(
+            &client,
+            &registry,
+            &workspace,
+            request,
+            &limits,
+            &mut harness::log::Discard,
+        )
+        .await,
+    );
+
+    assert_eq!(outcome.answer, "here it is");
+}
+
+/// The policy stops a run *before* the turn does anything, and the record says
+/// which call it stopped at.
+#[tokio::test]
+async fn a_write_suspends_before_anything_else_in_the_turn_runs() {
+    let (addr, _seen) = serve_many(vec![calling(
+        &[
+            ("c1", "read_file", r#"{"path":"a.txt"}"#),
+            ("c2", "write_file", r#"{"path":"out.txt","content":"x"}"#),
+        ],
+        (10, 1),
+    )])
+    .await;
+    let dir = TempWorkspace::new("suspend");
+    std::fs::write(dir.path.join("a.txt"), "hello").unwrap();
+    let workspace = Workspace::open(&dir.path).unwrap();
+    let registry = harness::tools::builtin();
+    let client = Client::new(config_at(addr, "k"))
+        .unwrap()
+        .with_tools(registry.specs());
+    let request = Request::new("m", "s", "write it").unwrap();
+
+    let mut log = Log::create(dir.path.join("runs")).unwrap();
+    let record = log.path().to_path_buf();
+    let ending = agent::run(
         &client,
         &registry,
         &workspace,
         request,
-        Limits {
-            // 110 tokens at $1/M is $0.00011, past the cap.
-            max_usd: Some(0.00005),
-            prices: Some(Prices {
-                input_per_mtok: 1.0,
-                output_per_mtok: 1.0,
-            }),
-            ..Limits::default()
-        },
-        &mut harness::log::Discard,
+        &Limits::default(),
+        &mut log,
     )
-    .await
-    .unwrap();
+    .await;
+    drop(log);
 
-    assert_eq!(outcome.answer, "here it is");
+    match ending {
+        Ok(Ending::Suspended(suspension)) => {
+            assert_eq!(suspension.call.id, "c2", "the call that needs a decision");
+        }
+        other => panic!("expected a suspension, got {other:?}"),
+    }
+
+    let events = Log::read(&record).unwrap();
+    assert!(
+        matches!(events.last(), Some(Event::ApprovalRequested { call_id, .. }) if call_id == "c2"),
+        "the record ends at the pause: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(event, Event::Tool { .. })),
+        "the allowed call in the same turn must not have run: {events:?}"
+    );
+    assert!(
+        !dir.path.join("out.txt").exists(),
+        "nothing was written"
+    );
+}
+
+/// A refusal is an observation: the model is told, and the run carries on.
+#[tokio::test]
+async fn a_denied_call_is_an_observation() {
+    let (addr, seen) = serve_many(vec![
+        calling(
+            &[("c1", "write_file", r#"{"path":"out.txt","content":"x"}"#)],
+            (10, 1),
+        ),
+        answering("I was not allowed", (10, 1)),
+    ])
+    .await;
+    let dir = TempWorkspace::new("deny");
+    let workspace = Workspace::open(&dir.path).unwrap();
+    let registry = harness::tools::builtin();
+    let client = Client::new(config_at(addr, "k"))
+        .unwrap()
+        .with_tools(registry.specs());
+    let request = Request::new("m", "s", "write it").unwrap();
+    let mut limits = Limits::default();
+    limits.policy.set("write_file", Permission::Deny);
+
+    let outcome = answered(
+        agent::run(
+            &client,
+            &registry,
+            &workspace,
+            request,
+            &limits,
+            &mut harness::log::Discard,
+        )
+        .await,
+    );
+
+    assert_eq!(outcome.answer, "I was not allowed");
+    let seen = seen.await.unwrap();
+    assert!(
+        seen[1].contains("denied by the operator"),
+        "the model is told why: {}",
+        seen[1]
+    );
+    assert!(!dir.path.join("out.txt").exists(), "nothing was written");
 }

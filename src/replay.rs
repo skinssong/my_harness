@@ -3,8 +3,8 @@
 //! Replay calls nothing and touches nothing. It reads the model's replies out of
 //! the record, runs each through the same `decide` the live loop uses, and then
 //! checks that the record contains exactly the effects that decision implies —
-//! the right tools, in the right order, ending in the same answer or the same
-//! halt.
+//! the right tools, in the right order, ending in the same answer, the same
+//! halt, or the same pause.
 //!
 //! The point is not to re-print the transcript. It is to catch the case where
 //! the loop would now decide something the record says it did not: a change in
@@ -12,7 +12,7 @@
 //! as a subtly different run.
 
 use crate::agent::{decide, Decision};
-use crate::event::{Event, HaltRule};
+use crate::event::{Event, Halt};
 use crate::message::ToolCall;
 use crate::reply::{Reply, Usage};
 
@@ -42,11 +42,17 @@ pub enum ReplayError {
     ToolOrder { expected: String, found: String },
     #[error("a tool result appeared with no reply asking for it")]
     OrphanTool,
+    #[error("an approval appeared with no reply asking for that call")]
+    OrphanApproval,
+    #[error("after an approval request the record held {found}")]
+    ExpectedDecision { found: String },
+    #[error("call {call} was denied but the record shows it succeeded")]
+    DenialSucceeded { call: String },
     #[error("an answer appeared with no reply producing it")]
     OrphanAnswer,
     #[error("the record continues after the run had finished")]
     AfterFinish,
-    #[error("the record ends without an answer or a halt")]
+    #[error("the record ends without an answer, a halt or a pause")]
     Incomplete,
     #[error("the record halts for {rule}, which this run's limits do not allow")]
     HaltRuleDiffers { rule: String },
@@ -63,27 +69,28 @@ struct Started {
 
 /// A recorded halt has to be one the run's own limits could have produced —
 /// otherwise a loop that stopped halting correctly would replay clean.
-fn check_halt(
-    halted: u32,
-    rule: Option<HaltRule>,
-    turn: u32,
-    limits: &Started,
-) -> Result<(), ReplayError> {
-    if halted != turn {
+fn check_halt(halt: &Halt, turn: u32, limits: &Started) -> Result<(), ReplayError> {
+    let recorded = match halt {
+        Halt::Ceiling { turns }
+        | Halt::Budget { turns, .. }
+        | Halt::Stuck { turns, .. }
+        | Halt::Provider { turns, .. } => *turns,
+    };
+    if recorded != turn {
         return Err(ReplayError::TurnCountDiffers {
             decided: turn,
-            recorded: halted,
+            recorded,
         });
     }
-    let violated = match rule {
+    let violated = match halt {
         // The ceiling only stops a run that reached it.
-        Some(HaltRule::Ceiling) if turn != limits.max_turns => "the turn ceiling",
+        Halt::Ceiling { .. } if turn != limits.max_turns => "the turn ceiling",
         // A stuck stop before it could trigger, or with the check disabled.
-        Some(HaltRule::Stuck) if limits.stuck_after == 0 || turn < limits.stuck_after => {
+        Halt::Stuck { .. } if limits.stuck_after == 0 || turn < limits.stuck_after => {
             "the stuck check"
         }
         // A budget stop on a run that was never given a budget.
-        Some(HaltRule::Budget) if limits.max_usd.is_none() => "a money budget",
+        Halt::Budget { .. } if limits.max_usd.is_none() => "a money budget",
         _ => return Ok(()),
     };
     Err(ReplayError::HaltRuleDiffers {
@@ -96,8 +103,10 @@ fn name(event: &Event) -> String {
         Event::Start { .. } => "a start event",
         Event::Reply { .. } => "a reply",
         Event::Tool { .. } => "a tool result",
+        Event::ApprovalRequested { .. } => "an approval request",
+        Event::ApprovalDecided { .. } => "an approval decision",
         Event::Answer { .. } => "an answer",
-        Event::Halt { .. } => "a halt",
+        Event::Halt(_) => "a halt",
     }
     .to_string()
 }
@@ -110,6 +119,7 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
     let mut started = false;
     let mut limits = Started::default();
     let mut finished = false;
+    let mut waiting = false;
 
     let mut index = 0;
     while index < events.len() {
@@ -164,20 +174,47 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
 
                 index += 1;
 
-                // A run can stop between deciding and acting: the budget is
-                // checked there, and a transport failure can land there too.
-                // The record then holds a reply and a halt with no results
-                // between them, which is a legitimate ending, not a torn file.
-                if let Some(Event::Halt {
-                    turns: halted,
-                    rule,
-                    ..
-                }) = events.get(index)
-                {
-                    check_halt(*halted, *rule, turn, &limits)?;
-                    index += 1;
-                    finished = true;
-                    continue;
+                // What follows a reply can end the run before it acts: a halt
+                // (the budget and the provider both stop there) or an approval
+                // request (the policy stopped it there). Both are endings, not
+                // torn records.
+                let mut asked: Option<String> = None;
+                let mut approved: Option<bool> = None;
+                match events.get(index) {
+                    Some(Event::Halt(halt)) => {
+                        check_halt(halt, turn, &limits)?;
+                        index += 1;
+                        finished = true;
+                        continue;
+                    }
+                    Some(Event::ApprovalRequested { call_id, .. }) => {
+                        if !calls.iter().any(|call| call.id == *call_id) {
+                            return Err(ReplayError::OrphanApproval);
+                        }
+                        asked = Some(call_id.clone());
+                        index += 1;
+                        match events.get(index) {
+                            // The record ends at the pause: the run is waiting,
+                            // which is an ending of its own.
+                            None => {
+                                waiting = true;
+                                continue;
+                            }
+                            Some(Event::ApprovalDecided {
+                                call_id: decided,
+                                approved: verdict,
+                            }) if decided == call_id => {
+                                approved = Some(*verdict);
+                                index += 1;
+                            }
+                            Some(found) => {
+                                return Err(ReplayError::ExpectedDecision {
+                                    found: name(found),
+                                })
+                            }
+                        }
+                    }
+                    _ => {}
                 }
 
                 match decide(reply) {
@@ -216,7 +253,7 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
                                     found: "the end of the record".to_string(),
                                 });
                             };
-                            let Event::Tool { call_id, .. } = found else {
+                            let Event::Tool { call_id, ok, .. } = found else {
                                 return Err(ReplayError::ExpectedTool {
                                     found: name(found),
                                 });
@@ -227,6 +264,14 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
                                     found: call_id.clone(),
                                 });
                             }
+                            // A denied call must not have done anything.
+                            let denied = asked.as_deref() == Some(expected.id.as_str())
+                                && approved == Some(false);
+                            if denied && *ok {
+                                return Err(ReplayError::DenialSucceeded {
+                                    call: expected.id,
+                                });
+                            }
                             tools += 1;
                             index += 1;
                         }
@@ -234,13 +279,12 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
                 }
             }
             Event::Tool { .. } => return Err(ReplayError::OrphanTool),
+            Event::ApprovalRequested { .. } | Event::ApprovalDecided { .. } => {
+                return Err(ReplayError::OrphanApproval)
+            }
             Event::Answer { .. } => return Err(ReplayError::OrphanAnswer),
-            Event::Halt {
-                turns: halted,
-                rule,
-                ..
-            } => {
-                check_halt(*halted, *rule, turn, &limits)?;
+            Event::Halt(halt) => {
+                check_halt(halt, turn, &limits)?;
                 index += 1;
                 finished = true;
             }
@@ -250,7 +294,7 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
     if !started {
         return Err(ReplayError::NotStarted);
     }
-    if !finished {
+    if !finished && !waiting {
         return Err(ReplayError::Incomplete);
     }
 

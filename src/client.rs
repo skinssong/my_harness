@@ -104,6 +104,12 @@ impl Client {
         self
     }
 
+    /// The model this client was built for. The loop records it, so that a
+    /// record describes its run without the environment.
+    pub fn model(&self) -> &str {
+        self.config.model()
+    }
+
     pub async fn complete(&self, request: &Request) -> Result<Reply, Error> {
         let response = self
             .http

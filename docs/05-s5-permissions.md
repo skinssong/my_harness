@@ -1,6 +1,6 @@
 # S5 — bound what the agent may do unasked
 
-**Status:** designed, 2026-11-16. No code yet.
+**Status:** built, 2026-11-18
 
 [← design index](../DESIGN.md)
 
@@ -14,105 +14,124 @@
 
 *Source: [diagrams/p5-structs.mmd](../diagrams/p5-structs.mmd). Grey is built and unchanged; green is new in this phase; amber is an existing block whose shape changed; a red dotted edge is a connection the phase removes.*
 
-Grey is S1–S4 unchanged. **Amber** marks the two blocks that change shape: `agent::run` gains a stop-mid-run path, so it can hand back a suspension instead of only an answer or an error, and `Registry` gains the policy check — placed there because S2 insisted every action passes through one chokepoint, and a check anywhere else would be a check some call could miss. Green adds `resume()`, which reads a suspended record and continues it live. Nothing is removed, so there is no red.
+Grey is S1–S4 unchanged. **Amber** is `agent::run`, which gains a stop-mid-run path and a second job: it consults the policy before a turn acts. Green adds `resume()`, which reads a paused record and continues it live. Nothing is removed, so there is no red.
 
-## The exchange, walked through
+**`Registry` is grey, and that is a deliberate correction to this phase's first design.** The earlier drawing had the registry checking policy before running a call, which put the security decision inside the thing that executes. It does not belong there: "may this run" is a question about the *run*, and `resume` has to answer it from a recorded decision rather than by asking again. So the policy is a value in `Limits`, its decision is a pure function, and the loop asks it. Dispatch stays what S2 made it — the one place a call is executed.
 
-Default policy: **allow** `read_file`, `list_dir`; **ask** `write_file`, `bash`; anything unlisted is **deny**. Task: *"summarise team-notes.txt into report.txt"*.
+## Four endings, one vocabulary
 
-**First run — it stops before acting.**
-
-```
-$ cargo run -- --workspace /tmp/w "summarise team-notes.txt into report.txt"
-approval needed  call_7f2  write_file  {"path":"report.txt","content":"Q3 planning…"}
-record  /Users/you/.harness/runs/run-1794812000-81234-0.jsonl
-decide  cargo run -- resume <record> --approve call_7f2
-        cargo run -- resume <record> --deny call_7f2
-exit 3
-```
-
-The record at that moment:
-
-```json
-{"event":"start","model":"deepseek-v4.1-flash", …}
-{"event":"reply","text":null,"calls":[{"id":"call_7f2","name":"write_file",
-  "arguments":"{\"path\":\"report.txt\",\"content\":\"Q3 planning…\"}"}],"input":820,"output":44}
-{"event":"approval_requested","call_id":"call_7f2","name":"write_file",
-  "arguments":"{\"path\":\"report.txt\",\"content\":\"Q3 planning…\"}"}
-```
-
-Nothing was written. The suspension happens at the chokepoint, before `dispatch` — which is why S2 insisted every action passes through one place.
-
-**Second run — the decision, then it continues.**
-
-```
-$ cargo run -- resume <record> --approve call_7f2
-wrote report.txt; it says: Q3 planning — hire two engineers in Q1, migrate billing by March.
-
-tokens 4201 in · 96 out · 4297 total · 2 turn(s)
-record (appended to the same file)
-```
-
-Four events are appended, not rewritten:
-
-```json
-{"event":"approval_decided","call_id":"call_7f2","approved":true}
-{"event":"tool","call_id":"call_7f2","name":"write_file","ok":true,"text":"wrote 92 bytes…"}
-{"event":"reply","text":"wrote report.txt; it says: …","calls":[],"input":1733,"output":52}
-{"event":"answer","text":"wrote report.txt; it says: …","turns":2}
-```
-
-**Denied — and the model carries on.**
-
-```
-$ cargo run -- resume <record> --deny call_7f2
-I could not write it — the operator denied the call — so here is the summary instead: …
-
-{"event":"approval_decided","call_id":"call_7f2","approved":false}
-{"event":"tool","call_id":"call_7f2","name":"write_file","ok":false,
- "text":"tool_error: denied by the operator"}
-```
-
-A denial is an observation, not an abort: the same rule as a failing tool. The model is told why and can choose again.
-
-## What this forces
-
-**The run no longer has two endings.** `run` returns `Result<Outcome, Error>` today; suspension is neither. It becomes:
+A run can end in exactly four ways, and the code now says so once:
 
 ```rust
 pub enum Ending {
     Answered(Outcome),
-    Suspended(Suspension),   // needs a decision before it can continue
-    Stopped(Error),
+    Halted(Halt),        // a rule stopped it
+    Suspended(Suspension), // waiting for a decision
 }
-pub struct Suspension { pub call: ToolCall }
+
+pub enum Halt { Ceiling { turns }, Budget { turns, spent, cap },
+                Stuck { turns, repeats }, Provider { turns, detail } }
+
+pub async fn run(..) -> Result<Ending, Error>;   // Err is only the record failing
 ```
 
-That is S5's amber change — the driver gains a stop-mid-run path — and the CLI maps it to exit 3, distinct from 1 so a script can tell "needs you" from "broke".
+The first draft of this phase had `Ending::Stopped(Error)`, which lumped "the ceiling did its job" in with "the provider died". That is the same conflation that made budget stops unreplayable at S3: everything that was not an answer was treated as a failure. `Halted` is a rule working; `Err` is the harness failing at its own bookkeeping. A provider stop is `Halted::Provider` — still distinct, because the caller needs to know whose fault it was, but no longer in a different category from the other three.
 
-**Resume is replay plus continuation.** It rebuilds the conversation from the record (`Start` ⇒ system and task, each `Reply` ⇒ assistant, each `Tool` ⇒ tool result), applies the decision, dispatches, and then continues *live* — new model calls, new events appended to the same file. S3's append-only record is what makes this possible: nothing has to be re-derived from a model that no longer exists.
+The record stores the same value: `Event::Halt(Halt)`. The loop's return value and the record's last line are one type rendered once, so they cannot drift.
 
-**The policy is per tool, not per argument.** `write_file` is asked about regardless of path; `bash` regardless of command. Argument-level rules ("may write inside `out/`, never `../`") are a later question, and the file tools already refuse paths outside the workspace.
+## The gate
 
-```rust
-pub enum Permission { Allow, Ask, Deny }
-pub struct Policy { /* by tool name; unlisted ⇒ Deny */ }
-// LLM_TOOLS_ALLOW=read_file,list_dir
-// LLM_TOOLS_ASK=write_file,bash
-// LLM_TOOLS_DENY=
+`Policy` maps a tool name to `Allow`, `Ask` or `Deny`. It is pure — no registry, no I/O — so the whole security surface is tested the way the projection is, without a provider.
+
+Defaults: `read_file` and `list_dir` allowed, `write_file` and `bash` asked about, anything unlisted refused. `LLM_TOOLS_ALLOW` / `LLM_TOOLS_ASK` / `LLM_TOOLS_DENY` take comma-separated names and are applied over the defaults in that order, so the most restrictive listing wins.
+
+**The check runs before any call in a turn, not just the one that needs a decision.** If a turn asks for `[read_file, write_file]`, the read does not happen while the write waits — otherwise the promise is "no side effect happened", which is a much weaker claim to make and to test. On resume the whole turn runs.
+
+An unknown tool skips the gate: `dispatch` already answers `no tool named …; available: …`, which tells the model more than a refusal would.
+
+A **denial is an observation**, not an abort: `tool_error: denied by the operator`, the model sees it and may try something else. Same rule as a failing tool.
+
+## The exchange, walked through — from a live run
+
+Task: *"read notes.txt and write a one-line summary to summary.txt"*.
+
 ```
+$ harness --workspace /tmp/s5-ws --log /tmp/s5-log "read notes.txt and write a one-line summary to summary.txt"
+approval needed  chatcmpl-tool-9558…  write_file  {"path":"summary.txt","content":"Q3 plan: …"}
+record  /tmp/s5-log/run-1794933435-57771-0.jsonl
+decide  harness resume <record> --approve chatcmpl-tool-9558…
+        harness resume <record> --deny chatcmpl-tool-9558…
+$ echo $?
+3
+```
+
+The record at that moment:
+
+```
+start
+reply    calls=[read_file, list_dir]
+tool     read_file  ok
+tool     list_dir   ok
+reply    calls=[write_file]
+approval_requested
+```
+
+`summary.txt` does not exist. The pause happened when the second reply asked for it, before any part of that turn ran.
+
+Then, in a later process:
+
+```
+$ harness resume <record> --workspace /tmp/s5-ws --approve chatcmpl-tool-9558…
+Done — summary.txt contains: "Q3 plan: hire two engineers in Q1 and migrate billing by March."
+tokens 2588 in · 163 out · 2751 total · 3 turn(s)
+```
+
+and the record grows by four events, appended to the same file:
+
+```
+approval_decided
+tool     write_file  ok
+reply    calls=[]
+answer
+```
+
+Replaying the whole record reproduces the run — `3 turn(s) · 3 tool result(s)` — including the pause.
+
+## Resume
+
+`resume` rebuilds the conversation from the record: `Start` gives the system and task, each `Reply` an assistant message, each `Tool` a tool result. It applies the decision to the call that asked, runs that turn's calls (all of them — the pause came before any), records the results, and then continues **live**, at the next turn, with the spending so far.
+
+Three consequences worth stating:
+
+- **It needs the run's surroundings again.** The record holds `max_turns`, `stuck_after` and `max_usd`, but not the prices, the workspace path or the context policy. So `resume` takes the same flags as `run`; a record naming an absolute path that has since moved would be worse than asking.
+- **A resumed run can suspend again.** The live agent below is the record's continuation, and the gate is still there.
+- **The stuck detector restarts.** It compares whole turns, and resume does not reconstruct the previous turn's fingerprint. A resumed run cannot be declared stuck on the strength of turns it did not observe.
+
+## Replay
+
+Replay learned the vocabulary rather than a special case:
+
+- after a calling reply, a `Halt` is an ending (the budget and the provider both stop there);
+- an `ApprovalRequested` names a call the reply actually made, else it is an orphan;
+- an `ApprovalRequested` with nothing after it is a run **waiting**, not a torn file;
+- `ApprovalDecided` must follow, and a call recorded as denied must not show a successful tool result.
 
 ## What it does not do
 
-- **`bash` is not sandboxed, and will not be.** `read_file`, `write_file` and `list_dir` resolve paths lexically and cannot leave the workspace. A shell can. `sandbox-exec` is macOS-only and deprecated, a container is out of scope for a local tool, and a shell that can run `curl` can do anything a shell can do. **The approval gate is the control; that is a gate, not a cage**, and it should be described that way rather than implying containment.
-- **No remember-my-answer.** Each `bash` call asks again. A per-run "allow all bash" would be one line, and is deliberately not there yet.
+- **`bash` is not sandboxed, and will not be.** `read_file`, `write_file` and `list_dir` resolve paths — including symlinks — and refuse to leave the workspace. A shell can leave it. **The approval gate is the control; that is a gate, not a cage**, and it should be described that way rather than implying containment.
+- **No remember-my-answer.** Each `bash` call asks again. `LLM_TOOLS_ALLOW=bash` is the way to stop being asked, and it is a decision, not a default.
+- **No argument-level rules.** `write_file` is asked about regardless of path. "May write inside `out/`" is a later question.
 - **No revision of a decision.** The record is append-only; a second decision is a second event, and the first stands.
 
 ## How it is checked
 
 - An allowed tool runs without interrupting anything.
-- An asked-about tool suspends: the run exits 3, the record holds `approval_requested`, and **the effect has not happened**.
-- `resume --approve` dispatches the pending call, appends the decision, and finishes the run.
-- `resume --deny` returns `tool_error: denied by the operator` to the model, which can still answer.
-- A tool named in no list is denied rather than allowed.
-- A suspended run replays like any other — suspension is just events.
+- A turn with one asked-about call suspends having run nothing — no tool event, no effect on disk.
+- The run exits 3, and the record ends at `approval_requested`.
+- `resume --approve` dispatches, appends the decision and the result, and finishes the run.
+- `resume --deny` returns `tool_error: denied by the operator` to the model, which can still answer, and nothing is written.
+- Resuming with an id that was never asked about is refused.
+- A tool named in no list is refused rather than allowed.
+- A suspended record replays as waiting; a resumed one replays end to end.
+
+*All met: the live run above for approve, a second live run for deny (which then tried `bash`, and suspended again), and the rest by test.*

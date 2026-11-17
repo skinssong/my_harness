@@ -6,8 +6,10 @@ it stops — is this program.
 
 Phases so far: **S1** one call and its cost. **S2** tools, a chokepoint and the
 loop. **S3** a record of every run, replay of that record, a money budget and a
-stuck detector. **S4** and **S5** are designed but not built. The design has one
-document per phase under [docs/](docs/), indexed by [DESIGN.md](DESIGN.md).
+stuck detector. **S4** keeps a long task inside the window. **S5** bounds what
+the agent may do unasked, and lets a run pause for a decision. S6 and S7 are
+open. The design has one document per phase under [docs/](docs/), indexed by
+[DESIGN.md](DESIGN.md).
 
 ## Run it
 
@@ -41,6 +43,27 @@ tokens 2532 in · 113 out · 2645 total · 3 turn(s)
 | `--context-window N` | tokens the model accepts (default 64000); past 60% of it, old tool results are masked in the request |
 | `--keep-turns K` | turns kept verbatim at the end of the request (default 2) |
 | `--log DIR` | where runs are recorded (default `~/.harness/runs`) |
+
+Which tools may run unasked is a policy: `read_file` and `list_dir` are allowed,
+`write_file` and `bash` are asked about, anything unlisted is refused.
+`LLM_TOOLS_ALLOW`, `LLM_TOOLS_ASK` and `LLM_TOOLS_DENY` take comma-separated
+names and are applied over those defaults, most restrictive last.
+
+When a run needs a decision it stops and exits **3**:
+
+```
+$ cargo run -- "write the plan to plan.txt"
+approval needed  call_7f2  write_file  {"path":"plan.txt","content":"…"}
+record  ~/.harness/runs/run-1794812000-81234-0.jsonl
+decide  harness resume <record> --approve call_7f2
+        harness resume <record> --deny call_7f2
+```
+
+`resume` takes the same `--workspace` and limit flags as `run`, because the
+record does not carry them. A denial is not an abort: the model is told
+`denied by the operator` and carries on.
+
+Exit codes: **0** answered, **1** stopped by a rule or failed, **3** waiting.
 
 ## What it can do
 
@@ -78,6 +101,10 @@ Replay calls nothing: it re-derives each decision from the record and checks the
 recorded effects match, so a change to the loop that alters a decision shows up
 as a mismatch. It needs no provider settings at all.
 
+A run that paused for a decision replays too: the record ends at
+`approval_requested`, and a resumed run appends its decision, the result and
+whatever follows to the same file.
+
 The record lives outside the workspace on purpose. A directory the tools can
 reach is not an audit trail — `write_file` and `bash` would both reach it. Point
 `--log` inside the workspace and the harness warns rather than stopping you.
@@ -91,7 +118,8 @@ reach is not an audit trail — `write_file` and `bash` would both reach it. Poi
 | `client` | the single boundary: one POST, three ways to fail |
 | `tool` | the contract, the registry, the chokepoint, observation shaping |
 | `tools/` | `read_file`, `list_dir`, `write_file`, `bash` |
-| `agent` | the loop, its ceiling, the budget and the stuck check |
+| `agent` | the loop, its ceiling, the budget, the stuck check and the gate |
+| `policy` | what a tool may do unasked: allow, ask, deny |
 | `context` | the projection: what of the conversation goes on the wire |
 | `event` / `log` | what a run records, and the file it records to |
 | `replay` | re-deriving a recorded run |
@@ -100,15 +128,15 @@ reach is not an audit trail — `write_file` and `bash` would both reach it. Poi
 ## Check it
 
 ```
-cargo test      # 98 tests, all under tests/; the provider is a localhost
+cargo test      # 110 tests, all under tests/; the provider is a localhost
                 # stub, so no key is needed
 cargo clippy --all-targets
 ```
 
 ## Not yet
 
-No permissions (S5): `bash` is unbounded, and nothing asks before a file is
-written. No subagents or eval rig (S6), no MCP (S7). No retries anywhere.
+`bash` is gated but not sandboxed: approving it hands over a shell. No subagents
+or eval rig (S6), no MCP (S7). No retries anywhere.
 
 Masking is not compaction: an old result is replaced by a marker, never by a
 summary, so nothing is inferred about what it meant. A run that needs the masked
