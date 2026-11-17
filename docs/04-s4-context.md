@@ -33,13 +33,36 @@ Now the same shape with every result at the 8 KiB cap, one call per turn (`740 +
 
 ## The projection
 
-Masking, not summarising. Older tool results keep their place and lose their bulk — the stack of messages stays as it was, one layer per message, and only the old results collapse:
+Masking, not summarising. The request is rebuilt from the record every turn, so an old result can lose its bulk on the way out without the record losing anything.
 
-![The request stack before and after the projection](../diagrams/s4-projection.svg)
+The request the loop builds:
 
-*Source: [diagrams/s4-projection.mmd](../diagrams/s4-projection.mmd). Grey is a message kept as it was; amber is a message replaced by its marker.*
+```json
+{
+  "model": "deepseek-v4.1-flash",
+  "temperature": 0.0,
+  "tools": [ /* four tool schemas, sent every turn */ ],
+  "tool_choice": "auto",
+  "messages": [
+    {"role":"system","content":"You work inside a small workspace…"},
+    {"role":"user","content":"find the failing test"},
+    {"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function",
+       "function":{"name":"bash","arguments":"{\"command\":\"cat build.log\"}"}}]},
+    {"role":"tool","content":"exit 0\n…8192 bytes…","tool_call_id":"call_1","name":"bash"},
+    {"role":"assistant","content":null,"tool_calls":[{"id":"call_2", … }]},
+    {"role":"tool","content":"exit 0\nFAILED test_login…","tool_call_id":"call_2","name":"bash"}
+  ]
+}
+```
 
-The record still holds all 8,192 bytes of that `cat build.log` result; the request carries a marker saying where they went. Nothing is reordered, and no message loses its partner — which is the whole difficulty, since a provider rejects a `tool` message whose call is missing.
+And the one element that goes on the wire differently:
+
+```json
+{"role":"tool","content":"[masked: was 8192 bytes; rerun the command if needed]",
+ "tool_call_id":"call_1","name":"bash"}
+```
+
+That is the whole of it. Everything else in the body is byte for byte what it was: the system message and the task are still first, `call_1`'s assistant message is still above its result, and `call_2`'s exchange is untouched. The record still holds all 8,192 bytes; only the copy sent carries the marker — which is why the model can see that `cat build.log` already ran and choose not to run it again.
 
 **Rules.**
 
@@ -76,7 +99,7 @@ Replaying that record offline reproduced the run exactly — and the record cont
 
 *Source: [diagrams/p4-structs.mmd](../diagrams/p4-structs.mmd). Grey is built and unchanged; green is new in this phase; amber is an existing block whose shape changed; a red dotted edge is a connection the phase removes.*
 
-Grey is S1–S3 unchanged, and that is the phase's whole claim: the record has to be untouched for replay to keep working, and nothing here reaches it. Green adds `project()`, inserted on the loop's path to the client. The **red dotted** edge is the connection it removes — the loop no longer sends its `Request` straight to `Client`; what leaves is a projection of what was built, and the difference is decided in one pure function, which is why nothing else has to move. What it does to a request is [the stack above](#the-projection); this says only where it sits.
+Grey is S1–S3 unchanged, and that is the phase's whole claim: the record has to be untouched for replay to keep working, and nothing here reaches it. Green adds `project()`, inserted on the loop's path to the client. The **red dotted** edge is the connection it removes — the loop no longer sends its `Request` straight to `Client`; what leaves is a projection of what was built, and the difference is decided in one pure function, which is why nothing else has to move. What it does to a request is [the payload above](#the-projection); this says only where it sits.
 
 Three things do not become nodes:
 
