@@ -100,7 +100,7 @@ reach is not an audit trail — `write_file` and `bash` would both reach it. Poi
 ## Check it
 
 ```
-cargo test      # 91 tests, all under tests/; the provider is a localhost
+cargo test      # 98 tests, all under tests/; the provider is a localhost
                 # stub, so no key is needed
 cargo clippy --all-targets
 ```
