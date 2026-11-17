@@ -316,6 +316,7 @@ async fn a_run_stops_when_the_same_call_and_result_repeat() {
     let (addr, _seen) = serve_many(vec![
         calling(&[("c1", "list_dir", "{}")], (10, 1)),
         calling(&[("c2", "list_dir", "{}")], (10, 1)),
+        calling(&[("c3", "list_dir", "{}")], (10, 1)),
     ])
     .await;
     let dir = TempWorkspace::new("stuck");
@@ -343,8 +344,10 @@ async fn a_run_stops_when_the_same_call_and_result_repeat() {
     drop(log);
 
     match outcome {
+        // `stuck_after` counts repetitions, so 2 means the third identical
+        // turn stops the run: the first is the one being repeated.
         Err(Error::Stuck { turns, repeats }) => {
-            assert_eq!(turns, 2);
+            assert_eq!(turns, 3);
             assert_eq!(repeats, 2);
         }
         other => panic!("expected the repetition to stop it, got {other:?}"),
@@ -463,4 +466,39 @@ async fn the_wire_is_masked_but_the_record_is_not() {
         !recorded.contains("[masked:"),
         "a marker is a request artefact, never a recorded one"
     );
+}
+
+/// The budget stops tools, not answers: a reply already paid for is returned
+/// even when that reply is the call that crossed the cap.
+#[tokio::test]
+async fn an_answer_is_returned_even_when_it_crosses_the_budget() {
+    let (addr, _seen) = serve_many(vec![answering("here it is", (100, 10))]).await;
+    let dir = TempWorkspace::new("budget-answer");
+    let workspace = Workspace::open(&dir.path).unwrap();
+    let registry = harness::tools::builtin();
+    let client = Client::new(config_at(addr, "k"))
+        .unwrap()
+        .with_tools(registry.specs());
+    let request = Request::new("m", "s", "say something").unwrap();
+
+    let outcome = agent::run(
+        &client,
+        &registry,
+        &workspace,
+        request,
+        Limits {
+            // 110 tokens at $1/M is $0.00011, past the cap.
+            max_usd: Some(0.00005),
+            prices: Some(Prices {
+                input_per_mtok: 1.0,
+                output_per_mtok: 1.0,
+            }),
+            ..Limits::default()
+        },
+        &mut harness::log::Discard,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.answer, "here it is");
 }

@@ -8,7 +8,7 @@ mod common;
 use common::{config_at, response, serve_many, TempWorkspace};
 
 use harness::agent::{self, Limits};
-use harness::event::{Event, LoggedCall};
+use harness::event::{Event, HaltRule, LoggedCall};
 use harness::log::Log;
 use harness::replay::{replay, ReplayError};
 use harness::{Client, Request, Workspace};
@@ -269,4 +269,99 @@ fn the_log_file_is_one_json_object_per_line() {
     let events = Log::read(&path).unwrap();
     assert_eq!(events.len(), 2);
     assert!(matches!(&events[1], Event::Reply { calls, .. } if calls.len() == 1));
+}
+
+/// A budget stop happens between deciding and acting, so the record holds a
+/// reply and a halt with no results between them. That is an ending, not a
+/// torn file, and replay has to accept it.
+#[test]
+fn a_budget_stop_replays_even_though_it_acted_on_nothing() {
+    let events = vec![
+        Event::Start {
+            model: "m".to_string(),
+            system: "s".to_string(),
+            task: "t".to_string(),
+            max_turns: 8,
+            stuck_after: 3,
+            max_usd: Some(0.001),
+        },
+        Event::Reply {
+            text: None,
+            calls: vec![LoggedCall {
+                id: "c1".to_string(),
+                name: "list_dir".to_string(),
+                arguments: "{}".to_string(),
+            }],
+            input: 100,
+            output: 10,
+        },
+        Event::Halt {
+            reason: "budget: spent $0.001100 of $0.001000 after 1 turn(s)".to_string(),
+            turns: 1,
+            rule: Some(HaltRule::Budget),
+        },
+    ];
+
+    let replayed = replay(&events).unwrap();
+    assert_eq!(replayed.turns, 1);
+    assert_eq!(replayed.answer, None);
+    assert_eq!(replayed.tools, 0, "it stopped before acting");
+}
+
+/// Replay holds a recorded halt against the limits the run started with, so a
+/// loop that stopped halting correctly cannot replay clean.
+#[test]
+fn a_halt_the_limits_do_not_allow_is_refused() {
+    let events = vec![
+        Event::Start {
+            model: "m".to_string(),
+            system: "s".to_string(),
+            task: "t".to_string(),
+            max_turns: 8,
+            stuck_after: 3,
+            max_usd: None,
+        },
+        Event::Reply {
+            text: None,
+            calls: vec![LoggedCall {
+                id: "c1".to_string(),
+                name: "list_dir".to_string(),
+                arguments: "{}".to_string(),
+            }],
+            input: 10,
+            output: 1,
+        },
+        Event::Halt {
+            reason: "no answer after 8 turns".to_string(),
+            turns: 1,
+            rule: Some(HaltRule::Ceiling),
+        },
+    ];
+
+    assert!(matches!(
+        replay(&events),
+        Err(ReplayError::HaltRuleDiffers { .. })
+    ));
+}
+
+/// The record is written a line at a time and flushed per event, so a process
+/// killed mid-write leaves a fragment. The events before it are still the run.
+#[test]
+fn a_record_cut_mid_line_keeps_what_landed() {
+    let dir = TempWorkspace::new("torn");
+    let path = dir.path.join("torn.jsonl");
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"event":"start","model":"m","system":"s","task":"t","max_turns":8,"stuck_after":3,"max_usd":null}"#,
+            "\n",
+            r#"{"event":"reply","text":"done","calls":[],"input":10,"output":1}"#,
+            "\n",
+            r#"{"event":"answer","text":"do"#
+        ),
+    )
+    .unwrap();
+
+    let events = Log::read(&path).unwrap();
+    assert_eq!(events.len(), 2, "the torn tail is dropped, not the record");
 }

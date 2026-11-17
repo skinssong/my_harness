@@ -256,3 +256,87 @@ fn a_failure_is_an_observation_not_a_panic() {
     assert!(!observation.ok);
     assert!(observation.text.starts_with("tool_error: "));
 }
+
+/// The lexical check cannot see a symlink: with `up` linked to `/`, the path
+/// `up/etc/hosts` has no `..` at all yet resolves outside the root.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_symlink_cannot_be_used_to_leave_the_workspace() {
+    let dir = TempWorkspace::new("symlink");
+    std::os::unix::fs::symlink("/", dir.path.join("up")).unwrap();
+    let workspace = Workspace::open(&dir.path).unwrap();
+
+    let through_link = dispatch(
+        &tools::builtin(),
+        &workspace,
+        &call("c1", "read_file", r#"{"path":"up/etc/hosts"}"#),
+    )
+    .await;
+    assert!(!through_link.ok, "{}", through_link.text);
+    assert!(
+        through_link.text.contains("outside the workspace"),
+        "{}",
+        through_link.text
+    );
+
+    // Folding `..` lexically first means a link cannot be climbed back out of
+    // either: this resolves inside the root and simply is not there.
+    let climbed = dispatch(
+        &tools::builtin(),
+        &workspace,
+        &call("c2", "read_file", r#"{"path":"up/../etc/hosts"}"#),
+    )
+    .await;
+    assert!(!climbed.ok, "{}", climbed.text);
+    assert!(!climbed.text.contains("root:"), "read a system file: {}", climbed.text);
+}
+
+/// A background child inherits the shell's pipes and can hold them open long
+/// after `sh` exits. The tool waits for the shell, so that is not a timeout.
+#[tokio::test]
+async fn a_child_holding_the_pipe_does_not_look_like_a_timeout() {
+    let dir = TempWorkspace::new("background");
+    let workspace = Workspace::open(&dir.path).unwrap();
+
+    let observation = dispatch(
+        &tools::builtin(),
+        &workspace,
+        &call(
+            "c1",
+            "bash",
+            r#"{"command":"sleep 5 & echo done","timeout_secs":1}"#,
+        ),
+    )
+    .await;
+
+    assert!(observation.ok, "{}", observation.text);
+    assert!(observation.text.starts_with("exit 0"), "{}", observation.text);
+    assert!(observation.text.contains("done"), "{}", observation.text);
+}
+
+/// Output is captured into a fixed window, so a command that prints without
+/// end costs a bounded amount of memory instead of the whole stream.
+#[tokio::test]
+async fn a_command_that_prints_without_end_is_capped() {
+    let dir = TempWorkspace::new("flood");
+    let workspace = Workspace::open(&dir.path).unwrap();
+
+    let observation = dispatch(
+        &tools::builtin(),
+        &workspace,
+        &call("c1", "bash", r#"{"command":"yes x | head -c 2000000"}"#),
+    )
+    .await;
+
+    assert!(observation.ok, "{}", observation.text);
+    assert!(
+        observation.text.contains("bytes elided"),
+        "kept {} bytes with no note",
+        observation.text.len()
+    );
+    assert!(
+        observation.text.len() < 100_000,
+        "kept {} bytes",
+        observation.text.len()
+    );
+}

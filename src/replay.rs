@@ -12,7 +12,7 @@
 //! as a subtly different run.
 
 use crate::agent::{decide, Decision};
-use crate::event::Event;
+use crate::event::{Event, HaltRule};
 use crate::message::ToolCall;
 use crate::reply::{Reply, Usage};
 
@@ -48,6 +48,47 @@ pub enum ReplayError {
     AfterFinish,
     #[error("the record ends without an answer or a halt")]
     Incomplete,
+    #[error("the record halts for {rule}, which this run's limits do not allow")]
+    HaltRuleDiffers { rule: String },
+}
+
+/// The limits the run started with. Replay reads the stopping rules from the
+/// record and holds the recorded halt against them.
+#[derive(Default)]
+struct Started {
+    max_turns: u32,
+    stuck_after: u32,
+    max_usd: Option<f64>,
+}
+
+/// A recorded halt has to be one the run's own limits could have produced —
+/// otherwise a loop that stopped halting correctly would replay clean.
+fn check_halt(
+    halted: u32,
+    rule: Option<HaltRule>,
+    turn: u32,
+    limits: &Started,
+) -> Result<(), ReplayError> {
+    if halted != turn {
+        return Err(ReplayError::TurnCountDiffers {
+            decided: turn,
+            recorded: halted,
+        });
+    }
+    let violated = match rule {
+        // The ceiling only stops a run that reached it.
+        Some(HaltRule::Ceiling) if turn != limits.max_turns => "the turn ceiling",
+        // A stuck stop before it could trigger, or with the check disabled.
+        Some(HaltRule::Stuck) if limits.stuck_after == 0 || turn < limits.stuck_after => {
+            "the stuck check"
+        }
+        // A budget stop on a run that was never given a budget.
+        Some(HaltRule::Budget) if limits.max_usd.is_none() => "a money budget",
+        _ => return Ok(()),
+    };
+    Err(ReplayError::HaltRuleDiffers {
+        rule: violated.to_string(),
+    })
 }
 
 fn name(event: &Event) -> String {
@@ -67,6 +108,7 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
     let mut output = 0u32;
     let mut tools = 0usize;
     let mut started = false;
+    let mut limits = Started::default();
     let mut finished = false;
 
     let mut index = 0;
@@ -78,10 +120,20 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
         }
 
         match event {
-            Event::Start { .. } => {
+            Event::Start {
+                max_turns,
+                stuck_after,
+                max_usd,
+                ..
+            } => {
                 if started {
                     return Err(ReplayError::RepeatedStart);
                 }
+                limits = Started {
+                    max_turns: *max_turns,
+                    stuck_after: *stuck_after,
+                    max_usd: *max_usd,
+                };
                 started = true;
                 index += 1;
             }
@@ -111,6 +163,23 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
                 };
 
                 index += 1;
+
+                // A run can stop between deciding and acting: the budget is
+                // checked there, and a transport failure can land there too.
+                // The record then holds a reply and a halt with no results
+                // between them, which is a legitimate ending, not a torn file.
+                if let Some(Event::Halt {
+                    turns: halted,
+                    rule,
+                    ..
+                }) = events.get(index)
+                {
+                    check_halt(*halted, *rule, turn, &limits)?;
+                    index += 1;
+                    finished = true;
+                    continue;
+                }
+
                 match decide(reply) {
                     Decision::Answer { text: decided } => {
                         let Some(Event::Answer {
@@ -166,13 +235,12 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
             }
             Event::Tool { .. } => return Err(ReplayError::OrphanTool),
             Event::Answer { .. } => return Err(ReplayError::OrphanAnswer),
-            Event::Halt { turns: halted, .. } => {
-                if *halted != turn {
-                    return Err(ReplayError::TurnCountDiffers {
-                        decided: turn,
-                        recorded: *halted,
-                    });
-                }
+            Event::Halt {
+                turns: halted,
+                rule,
+                ..
+            } => {
+                check_halt(*halted, *rule, turn, &limits)?;
                 index += 1;
                 finished = true;
             }

@@ -5,7 +5,7 @@
 //! of recording.
 
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -86,26 +86,35 @@ impl Log {
     pub fn read(path: impl AsRef<Path>) -> Result<Vec<Event>, LogError> {
         let path = path.as_ref();
         let shown = path.display().to_string();
-        let file = File::open(path).map_err(|err| LogError::Open {
+        let text = std::fs::read_to_string(path).map_err(|err| LogError::Open {
             path: shown.clone(),
             reason: err.to_string(),
         })?;
 
+        // A record is written one line at a time and flushed per event, so a
+        // process killed mid-write leaves a final fragment with no newline.
+        // That is the crash this file exists for: drop the fragment and replay
+        // everything that did land, rather than refusing the whole record.
+        let clean = text.ends_with('\n');
+        let body = text.strip_suffix('\n').unwrap_or(&text);
+        let total = body.split('\n').count();
+
         let mut events = Vec::new();
-        for (index, line) in BufReader::new(file).lines().enumerate() {
-            let line = line.map_err(|err| LogError::Line {
-                path: shown.clone(),
-                line: index + 1,
-                reason: err.to_string(),
-            })?;
+        for (index, line) in body.split('\n').enumerate() {
             if line.trim().is_empty() {
                 continue;
             }
-            events.push(serde_json::from_str(&line).map_err(|err| LogError::Line {
-                path: shown.clone(),
-                line: index + 1,
-                reason: err.to_string(),
-            })?);
+            match serde_json::from_str(line) {
+                Ok(event) => events.push(event),
+                Err(_) if index + 1 == total && !clean => break,
+                Err(err) => {
+                    return Err(LogError::Line {
+                        path: shown,
+                        line: index + 1,
+                        reason: err.to_string(),
+                    })
+                }
+            }
         }
         Ok(events)
     }

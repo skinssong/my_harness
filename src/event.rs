@@ -80,5 +80,25 @@ pub enum Event {
     Halt {
         reason: String,
         turns: u32,
+        /// Which rule stopped the run. Optional because records written before
+        /// S3's review carry only the reason, and replay must still read them.
+        #[serde(default)]
+        rule: Option<HaltRule>,
     },
+}
+
+/// The loop has four ways to stop without an answer, and replay checks a
+/// recorded halt against the limits the run started with. A reason string could
+/// not be compared; this can.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HaltRule {
+    /// The turn ceiling.
+    Ceiling,
+    /// The money budget.
+    Budget,
+    /// The same call and result repeating.
+    Stuck,
+    /// The provider stopped answering.
+    Transport,
 }

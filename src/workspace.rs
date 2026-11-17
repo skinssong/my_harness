@@ -8,6 +8,7 @@
 //! It is *not* a sandbox. `bash` runs a shell, and a shell can leave the root;
 //! bounding that is S5's job, not this type's.
 
+use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -21,6 +22,22 @@ pub enum WorkspaceError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workspace {
     root: PathBuf,
+}
+
+/// Drop `.` and fold `..` into the path textually. Safe only after the
+/// component check above has proved the path never climbs past its start.
+fn normalise(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 impl Workspace {
@@ -61,7 +78,34 @@ impl Workspace {
             }
         }
 
-        Ok(self.root.join(trimmed))
+        self.confine(&normalise(&self.root.join(trimmed)), trimmed)
+    }
+
+    /// The lexical check above cannot see a symlink. `up/../etc/hosts` has no
+    /// net `..`, but if `up` is a link to the root of the disk the kernel
+    /// resolves it to `/etc/hosts` — so the real path is checked too, and the
+    /// part that does not exist yet is appended to the real path of its
+    /// deepest existing ancestor.
+    fn confine(&self, joined: &Path, shown: &str) -> Result<PathBuf, WorkspaceError> {
+        let escape = || WorkspaceError::Escapes(shown.to_string());
+        let mut probe = joined;
+        let mut tail: Vec<&OsStr> = Vec::new();
+
+        let real = loop {
+            if let Ok(real) = probe.canonicalize() {
+                break real;
+            }
+            let name = probe.file_name().ok_or_else(escape)?;
+            tail.push(name);
+            probe = probe.parent().ok_or_else(escape)?;
+        };
+
+        if !real.starts_with(&self.root) {
+            return Err(escape());
+        }
+        let mut resolved = real;
+        resolved.extend(tail.iter().rev().copied());
+        Ok(resolved)
     }
 
     /// Path as the model should see it: relative to the root.

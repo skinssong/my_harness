@@ -21,7 +21,7 @@
 use crate::client::{Client, Error as ClientError};
 use crate::config::Prices;
 use crate::context::{self, ContextPolicy};
-use crate::event::{Event, LoggedCall};
+use crate::event::{Event, HaltRule, LoggedCall};
 use crate::log::{LogError, Recorder};
 use crate::message::{Message, ToolCall};
 use crate::reply::{Reply, Usage};
@@ -147,7 +147,22 @@ pub async fn run(
             }
         }
 
-        let reply = client.complete(&request.replaced(sent)).await?;
+        let reply = match client.complete(&request.replaced(sent)).await {
+            Ok(reply) => reply,
+            Err(err) => {
+                // A run that aborts still has to say so. Without this event the
+                // record simply stops, and replay cannot tell a transport
+                // failure from a truncated file. `turns` is the calls that
+                // finished, since this one did not. If recording fails, the
+                // transport failure is still the cause worth reporting.
+                let _ = recorder.record(Event::Halt {
+                    reason: format!("transport: {err}"),
+                    turns: turn - 1,
+                    rule: Some(HaltRule::Transport),
+                });
+                return Err(Error::Client(err));
+            }
+        };
         let usage = reply.usage();
         spent = spent.plus(usage);
 
@@ -157,23 +172,6 @@ pub async fn run(
             input: usage.input(),
             output: usage.output(),
         })?;
-
-        // Checked before acting: passing the budget should not also run tools.
-        if let (Some(cap), Some(spent_usd)) = (limits.max_usd, limits.spent_usd(spent)) {
-            if spent_usd > cap {
-                recorder.record(Event::Halt {
-                    reason: format!(
-                        "budget: spent ${spent_usd:.6} of ${cap:.6} after {turn} turn(s)"
-                    ),
-                    turns: turn,
-                })?;
-                return Err(Error::BudgetExceeded {
-                    turns: turn,
-                    spent: spent_usd,
-                    cap,
-                });
-            }
-        }
 
         match decide(reply) {
             Decision::Answer { text } => {
@@ -188,6 +186,27 @@ pub async fn run(
                 });
             }
             Decision::Act { calls, text } => {
+                // Checked before acting, so passing the budget does not also run
+                // tools. It is deliberately not checked before deciding: an
+                // answer already paid for is worth returning even when it is
+                // the call that crossed the cap.
+                if let (Some(cap), Some(spent_usd)) = (limits.max_usd, limits.spent_usd(spent)) {
+                    if spent_usd > cap {
+                        recorder.record(Event::Halt {
+                            reason: format!(
+                                "budget: spent ${spent_usd:.6} of ${cap:.6} after {turn} turn(s)"
+                            ),
+                            turns: turn,
+                            rule: Some(HaltRule::Budget),
+                        })?;
+                        return Err(Error::BudgetExceeded {
+                            turns: turn,
+                            spent: spent_usd,
+                            cap,
+                        });
+                    }
+                }
+
                 let mut messages = vec![Message::calling(calls.clone(), text)];
                 let mut signature = String::new();
                 for call in &calls {
@@ -213,18 +232,22 @@ pub async fn run(
                     ));
                 }
 
+                // Repetitions, not occurrences: the first turn of a streak is
+                // the one being repeated, so it counts zero. Otherwise
+                // `--stuck-after 1` would stop a run on its very first call.
                 repeats = match &previous_turn {
                     Some(previous) if *previous == signature => repeats + 1,
-                    _ => 1,
+                    _ => 0,
                 };
                 previous_turn = Some(signature);
 
                 if limits.stuck_after > 0 && repeats >= limits.stuck_after {
                     recorder.record(Event::Halt {
                         reason: format!(
-                            "stuck: the same call and result repeated {repeats} times"
+                            "stuck: the same call and result repeated {repeats} time(s) in a row"
                         ),
                         turns: turn,
+                        rule: Some(HaltRule::Stuck),
                     })?;
                     return Err(Error::Stuck {
                         turns: turn,
@@ -240,6 +263,7 @@ pub async fn run(
     recorder.record(Event::Halt {
         reason: format!("no answer after {} turns", limits.max_turns),
         turns: limits.max_turns,
+        rule: Some(HaltRule::Ceiling),
     })?;
     Err(Error::TurnsExceeded {
         turns: limits.max_turns,

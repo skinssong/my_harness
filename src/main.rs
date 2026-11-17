@@ -35,8 +35,8 @@ anything.
                    own record, which is warned about)
   --max-usd X      stop once the run has cost more than X dollars; needs
                    LLM_PRICE_IN and LLM_PRICE_OUT (dollars per million tokens)
-  --stuck-after N  stop when the same call produces the same result N times
-                   in a row (default 3; 0 disables)
+  --stuck-after N  stop when the same call produces the same result N more
+                   times in a row (default 3; 0 disables)
   --context-window N  what the model accepts, in tokens (default 64000). Past
                    60% of it, old tool results are masked in the request; the
                    record is never masked

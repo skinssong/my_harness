@@ -37,7 +37,7 @@ tokens 2532 in · 113 out · 2645 total · 3 turn(s)
 | `--workspace DIR` | the directory the tools work in (default: current) |
 | `--max-turns N` | model calls allowed before stopping (default 8) |
 | `--max-usd X` | stop once the run has cost more than X (needs the prices above) |
-| `--stuck-after N` | stop when the same call and result repeat N times (default 3, 0 off) |
+| `--stuck-after N` | stop when the same call and result repeat N more times (default 3, 0 off) |
 | `--context-window N` | tokens the model accepts (default 64000); past 60% of it, old tool results are masked in the request |
 | `--keep-turns K` | turns kept verbatim at the end of the request (default 2) |
 | `--log DIR` | where runs are recorded (default `~/.harness/runs`) |
@@ -46,10 +46,10 @@ tokens 2532 in · 113 out · 2645 total · 3 turn(s)
 
 | Tool | Does |
 |---|---|
-| `read_file` | reads a workspace file; `offset` and `limit` for long ones |
+| `read_file` | reads a workspace file; `offset` and `limit` for long ones, streamed rather than loaded |
 | `list_dir` | lists a directory, with `dir/` marked |
 | `write_file` | writes a file, creating parents |
-| `bash` | runs `sh -c` from the workspace root, with a timeout |
+| `bash` | runs `sh -c` from the workspace root, with a timeout and a capped capture |
 
 The file tools refuse paths that leave the workspace. **`bash` does not** — a
 shell can go anywhere, and containing it is S5's job. Point `--workspace` at
@@ -114,5 +114,6 @@ Masking is not compaction: an old result is replaced by a marker, never by a
 summary, so nothing is inferred about what it meant. A run that needs the masked
 bytes back has to re-read them.
 
-Replay re-derives decisions but not halt reasons: a budget or stuck stop is
-replayed by turn count alone.
+Replay re-derives decisions and checks each recorded halt against the limits the
+run started with — but it cannot recompute a budget stop, which would need the
+prices the record does not carry.
