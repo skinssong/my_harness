@@ -31,48 +31,51 @@ The case a research-style task actually takes: pieces of one document, in files,
 
 Task: *"notes/ holds one report in unordered chunks. Assemble them into report.md in the right order."*
 
-**Why delegation, and when it pays.** At these sizes it does not — one `cat` settles it. It pays at 200 KB per chunk, where the orchestrator cannot hold the prose at all. The trace below is unchanged by that scale, and that is the point: what comes back from a subagent is capped, so the parent's context does not grow with the material.
+**Why delegation, and when it pays.** At these sizes it does not — one `cat` settles it. It pays at 200 KB per chunk, where the orchestrator cannot hold the prose at all. The trace below is unchanged by that scale, and that is the point: what comes back from a child is capped, so the parent's context does not grow with the material.
 
-![The call chain, with the fan-out and the two gates](../diagrams/s6-call-dag.svg)
+**Who fans out: the harness, not the model.** `notes/` is known before the first model call, so the program enumerates it. The model never sees a filename, never chooses how many children exist, and never spends a turn discovering the directory. What is left to it is the part that actually needs judgement — the ordering.
 
-*Source: [diagrams/s6-call-dag.mmd](../diagrams/s6-call-dag.mmd). Blue is a provider round trip, grey a tool execution, amber the S5 gate, green the join. The four subagents are independent; today's loop would run them one after another.*
+![The call chain: harness fan-out, then the ordered assembly](../diagrams/s6-call-dag.svg)
 
-1. **P1** — system, task and tool specs only. The model cannot name a file, so its only sensible move is `list_dir("notes")` → `alpha.md beta.md delta.md gamma.md`.
-2. **P2** — four `delegate` calls in one turn, one per file: *"read notes/alpha.md; say what it covers, what it must follow, and quote its first sentence."*
-3. **Each subagent** — a nested run with its own record, tools restricted to `read_file` and `list_dir`: one read, then one paragraph back. 168, 150, 140 and 170 bytes. **The prose never returns.**
-4. **Join** — the orchestrator holds four claims, about 700 bytes, and orders them: gamma opens, beta follows gamma, alpha follows beta, delta follows alpha.
-5. **P3** — the ordering leaves as a command rather than as text: `cat notes/gamma.md notes/beta.md notes/alpha.md notes/delta.md > report.md`. `bash` is `Ask`, so the run exits **3** with `approval_requested` recorded and no file written.
+*Source: [diagrams/s6-call-dag.mmd](../diagrams/s6-call-dag.mmd). Blue is a provider round trip, grey is the harness or a tool, amber is the S5 gate, green is a claim coming back. The four children are independent and run concurrently.*
+
+1. **`main` reads `notes/` itself** — `std::fs::read_dir`, not a tool call, so it is in no record. Four names, sorted.
+2. **Four child runs, concurrently**, bounded at four. Each is the same `agent::run` given the same client, a **read-only** registry (`read_file` and `list_dir` allowed; `write_file` and `bash` refused), `max_turns: 3`, and its own record file. It reads one chunk and returns a claim: what it covers, what it must follow, its first sentence.
+3. **The claims are joined in file order** — 150, 168, 140, 170 bytes — not in completion order, so two runs of the same case produce the same request and the same record.
+4. **`main` composes the parent task**: the instruction plus the four claims. There is no `delegate` tool call and no tool event; the claims are *task text*. That is why nothing about replay or resume changes — `Start.task` is the whole record of what the parent was told.
+5. **P1 orders them** and asks for `bash cat notes/gamma.md notes/beta.md notes/alpha.md notes/delta.md > report.md`. `bash` is `Ask`, so the run exits **3** with `approval_requested` recorded and no file written.
 6. **Resume, approved** — the command runs; `report.md` exists.
-7. **P4** — `head -1` and `tail -1` on the result, to check its own seam. Another `bash`, another approval.
-8. **P5** — the answer.
+7. **P2 checks its own seam** with `head -1` and `tail -1` — another `bash`, another approval — and **P3 answers**.
 
 | | |
 |---|---|
-| model calls | 13 — five parent, eight subagent |
-| critical path, if the fan-out is concurrent | 7 calls |
-| largest context the orchestrator held | ~1.7k tokens |
-| largest thing a subagent returned | 170 bytes |
+| model calls | 11 — three parent, eight children |
+| critical path | 5 calls: one child's two, then the parent's three turns |
+| largest context the orchestrator held | ~1.9k tokens |
+| largest thing a child returned | 170 bytes |
 
-**What the trace settles.**
+**Settled.**
 
-- **The return value is the interface, and its cap is what makes it real.** Four short claims sit comfortably beside the ordering decision; four paragraphs would crowd out the reasoning they are supposed to support.
-- **A concluding action can be a command line.** `cat gamma beta alpha delta` *is* the ordering, made executable, and no prose passed through the model to produce it.
-- **S5's gate applies unchanged**, and fires twice on ordinary work — once to assemble, once to check.
+- **Trigger: the harness.** Deterministic, and testable — a fixture can assert `report.md` byte for byte, which a model-driven trigger cannot.
+- **Concurrency:** `tokio::task::JoinSet`, bounded at four, results written back by index.
+- **Children are read-only.** `write_file` and `bash` denied, `delegate` not registered at all.
+- **A child has its own record**, in the same log directory as the parent's.
+- **The claims enter the conversation as task text**, not as an observation — the cheapest way to make harness-injected context replayable without a new event type.
+- **S5's gate is untouched**, and fires twice on ordinary work.
 
-**What it leaves open.**
+**Still open.**
 
-- **Who fans out.** The trace has the model choosing `delegate`. The alternative — the harness lists the directory and spawns one subagent per file — is deterministic and testable, and gives the same picture with less model judgement. They need different tests: one can assert an order, the other measures a behaviour.
-- **What a subagent is.** It cannot be a `Tool`: `Tool::run` has no client and no recorder, deliberately, and a subagent needs both. So either the loop recognises a second kind of action, or `Tool` grows a context it should not have.
-- **The cap,** in bytes, and what a subagent does when it hits it.
-- **Records.** One file per run, or a parent file that names its children? The trace assumes children.
-- **Concurrency.** The loop runs several calls in order today. Parallel fan-out means the record's tool order has to be fixed by call order rather than completion order, or replay stops being deterministic.
-- **Nothing verifies the order.** A wrong `cat` produces a well-formed file. The `head`/`tail` check above is the model's idea, not a guarantee the harness makes — and "the agent caught its own mistake" is a result worth designing for rather than hoping for.
+- **The cap**, in bytes, and what a child does when it hits it — truncate and say so, most likely.
+- **The parent's record does not point at the child records.** A naming convention or an event would; neither is chosen.
+- **A child cannot suspend.** One run has one pending decision, and four children wanting `bash` at once has no record shape — which is why children are read-only rather than merely gated.
+- **A crash mid-fan-out leaves the parent record with no reply at all.** The children's records survive, and they are the evidence.
+- **Nothing verifies the assembled order.** A wrong `cat` produces a well-formed file; the seam check above is the model's idea, not a guarantee.
+- **Model-driven `delegate` is not built.** It is the general case — the fan-out not knowable in advance — and it would share the child-run function and add one tool.
 
 **Questions to settle first.**
 
-- What is a *task*? A prompt, a starting directory, and a checkable outcome — but "checkable" is the whole difficulty. Code-based grading needs a fixture filesystem and a deterministic assertion; an LLM judge needs a rubric and a reason to trust it.
-- What exactly does a subagent return — text, a structured result, or a diff? Whatever it is, it is the only thing the parent sees, so it is the interface. The trace argues for short text under a hard cap.
-- Does a subagent get the same tools, a subset, or its own policy? It must not get `delegate`, or recursion is unbounded; and a suspension *inside* a subagent is a decision, not an implementation detail.
+- What is a *task*, for the eval rig? A prompt, a starting directory, and a checkable outcome — but "checkable" is the whole difficulty. The assembly case is unusually kind: `report.md` either equals the four chunks in the fixed order or it does not.
+- Is model-driven delegation in scope, or is harness-driven fan-out the whole of S6? The general mechanism is the thing the course's "agent composes" story wants; the deterministic one is the thing that can be measured first.
 
 ## S7 — extend without rebuilding
 
