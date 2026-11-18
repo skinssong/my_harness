@@ -1,0 +1,55 @@
+%%{init: {"flowchart": {"wrappingWidth": 320}}}%%
+flowchart TB
+    START(["task · notes/ holds one report in unordered chunks"])
+
+    P1["P1 · parent turn 1<br/>790 in · 18 out"]:::llm
+    START --> P1
+    P1 -->|"list_dir"| L["list_dir<br/>Allow"]:::tool
+    L -->|"4 filenames"| P2
+
+    P2["P2 · parent turn 2<br/>4 tool_calls<br/>960 in · 210 out"]:::llm
+
+    subgraph FAN["d1–d4 are independent · concurrent in S6, sequential today"]
+        D1["d1 · alpha.md"]:::llm
+        D2["d2 · beta.md"]:::llm
+        D3["d3 · delta.md"]:::llm
+        D4["d4 · gamma.md"]:::llm
+        D1 --> R1["read_file"]:::tool
+        D2 --> R2["read_file"]:::tool
+        D3 --> R3["read_file"]:::tool
+        D4 --> R4["read_file"]:::tool
+        R1 --> A1["covers + follows<br/>168 B"]:::llm
+        R2 --> A2["covers + follows<br/>150 B"]:::llm
+        R3 --> A3["covers + follows<br/>140 B"]:::llm
+        R4 --> A4["covers + follows<br/>170 B"]:::llm
+    end
+
+    P2 --> D1
+    P2 --> D2
+    P2 --> D3
+    P2 --> D4
+    A1 --> J
+    A2 --> J
+    A3 --> J
+    A4 --> J
+    J["join · 4 claims, ≈700 B<br/>no prose crossed"]:::join
+
+    J --> P3["P3 · parent turn 3<br/>decides the order"]:::llm
+    P3 -->|"bash"| G1{"bash = Ask"}:::gate
+    G1 -->|"approved<br/>exit 3 → resume"| C1["cat γ β α δ > report.md<br/>report.md written"]:::tool
+    G1 -.->|"denied"| ND["observation:<br/>denied by the operator"]:::tool
+    C1 --> P4
+    ND --> P4
+
+    P4["P4 · parent turn 4<br/>checks its own seam"]:::llm
+    P4 -->|"bash"| G2{"bash = Ask"}:::gate
+    G2 -->|"approved"| C2["head -1 · tail -1"]:::tool
+    C2 --> P5["P5 · parent turn 5"]:::llm
+    P5 --> END(["answer · exit 0"])
+
+    classDef llm fill:#E3F2FD,stroke:#1565C0,color:#0D47A1
+    classDef tool fill:#ECEFF1,stroke:#90A4AE,color:#37474F
+    classDef gate fill:#FFF3E0,stroke:#EF6C00,color:#E65100
+    classDef join fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
+    style START fill:#FFFFFF,stroke:#37474F
+    style END fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
