@@ -1,0 +1,41 @@
+%%{init: {"flowchart": {"wrappingWidth": 300}}}%%
+flowchart LR
+    MAIN["main<br/>builds, prints"]:::existing
+    FAN["compose::fan_out()<br/>reads the directory, runs N children,<br/>joins by index"]:::added
+    LOOP["agent::run<br/>parent or child"]:::changed
+    CLIENT["Client<br/>one POST"]:::existing
+    REG["Registry<br/>finds, validates, runs"]:::existing
+    TOOLS["ReadFile · ListDir<br/>WriteFile · Bash"]:::existing
+    LOG["Log<br/>writes, reads the record"]:::existing
+    REPLAY["replay()<br/>re-derives a run"]:::existing
+    PROJECT["project()<br/>masks old results"]:::existing
+    RESUME["resume()<br/>continues a suspended run"]:::existing
+    PROV["provider"]:::external
+
+    MAIN -->|"Request · Limits · Policy"| LOOP
+    MAIN -->|"directory · limits"| FAN
+    FAN -->|"task · read-only limits · own Log<br/>×N, concurrent"| LOOP
+    LOOP -->|"Ending"| FAN
+    FAN -->|"Vec&lt;Claim&gt;, in file order"| MAIN
+
+    MAIN -->|"Config · tools"| CLIENT
+    LOOP -->|"Request, full"| PROJECT
+    PROJECT -->|"Request, masked"| CLIENT
+    CLIENT -->|"Wire"| PROV
+    PROV -->|"bytes"| CLIENT
+    CLIENT -->|"Reply"| LOOP
+    LOOP -->|"ToolCall, once the gate allows it"| REG
+    REG -->|"Args<br/>&amp;Workspace"| TOOLS
+    TOOLS -->|"Observation"| REG
+    REG -->|"Observation, shaped"| LOOP
+    LOOP -->|"Ending"| MAIN
+    LOOP -->|"Event · approval"| LOG
+    LOG -->|"Vec&lt;Event&gt;"| REPLAY
+    REPLAY -. "decide()" .-> LOOP
+    LOG -->|"Vec&lt;Event&gt;"| RESUME
+    RESUME -->|"decision, then live"| LOOP
+
+    classDef existing fill:#ECEFF1,stroke:#90A4AE,color:#37474F
+    classDef added fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
+    classDef changed fill:#FFF3E0,stroke:#EF6C00,color:#E65100
+    classDef external fill:#F5F5F5,stroke:#9E9E9E,color:#424242,stroke-dasharray:4 3

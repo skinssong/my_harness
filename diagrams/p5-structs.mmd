@@ -21,7 +21,7 @@ flowchart LR
     REG -->|"Args<br/>&amp;Workspace"| TOOLS
     TOOLS -->|"Observation"| REG
     REG -->|"Observation, shaped"| LOOP
-    LOOP -->|"Outcome · Suspension"| MAIN
+    LOOP -->|"Ending"| MAIN
     LOOP -->|"Event · approval"| LOG
     LOG -->|"Vec&lt;Event&gt;"| REPLAY
     REPLAY -. "decide()" .-> LOOP
