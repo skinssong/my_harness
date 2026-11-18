@@ -1,6 +1,6 @@
 # Rust agent harness — design
 
-**Status:** S1–S5 built and running; S6 and S7 deliberately open.
+**Status:** S1–S6 built and running; S7 deliberately open.
 
 ## Context
 
@@ -18,7 +18,7 @@ The eval rig is drawn beside the spine rather than on it: it is required by the 
 
 Diagrams are cumulative. **Grey** blocks were built in an earlier phase and are unchanged; **green** blocks *and edges* are new in this phase; **amber** marks an existing block whose *shape* changes; a **red dotted** edge is a connection the phase removes.
 
-Every phase has its own document, and every phase document carries the whole system drawn at that phase — directly on top of the one before it, so the difference *is* the phase. S1–S5 are built; S6 and S7 are open, with their blocks deliberately undesigned.
+Every phase has its own document, and every phase document carries the whole system drawn at that phase — directly on top of the one before it, so the difference *is* the phase. S1–S6 are built; S7 is open, with its blocks deliberately undesigned.
 
 Every diagram is rendered from its `.mmd` source by [`diagrams/build.sh`](diagrams/build.sh), which then applies [`diagrams/size.py`](diagrams/size.py): mermaid otherwise leaves the size to the container, which draws small in a narrow column. Edit the source, run the script, and the SVG matches what was drawn. Any `.svg` also opens at full size on its own.
 
@@ -61,7 +61,8 @@ Each phase has one document: the requirement, why the previous phase could not m
 | [S3](docs/03-s3-record.md) | explain and reproduce any run, offline | **built** |
 | [S4](docs/04-s4-context.md) | keep a long task inside the window | **built** |
 | [S5](docs/05-s5-permissions.md) | bound what the agent may do unasked | **built** |
-| [S6, S7](docs/06-s6-s7-open.md) | compose and measure; extend without rebuilding | open |
+| [S6](docs/06-s6-s7-open.md) | sub-tasks without contaminating the main context | **built** |
+| [S7](docs/06-s6-s7-open.md#s7--extend-without-rebuilding) | extend without rebuilding | open |
 
 ## Structs, and what crosses between them
 
@@ -76,6 +77,7 @@ The drawing is cumulative, and it lives in the phase documents — one per phase
 | S3 | [the record and replay](docs/03-s3-record.md#the-system-at-this-phase) |
 | S4 | [projection](docs/04-s4-context.md#the-system-at-this-phase) |
 | S5 | [permissions and suspension](docs/05-s5-permissions.md#the-system-at-this-phase) |
+| S6 | [composition](docs/06-s6-s7-open.md#the-system-at-this-phase) |
 
 Read any one on its own: grey is what earlier phases built, green is what that phase adds, amber is an existing block whose shape changes, red dotted is a connection it removes. No phase is a redraw.
 

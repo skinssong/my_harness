@@ -1,14 +1,12 @@
 # S6 and S7 — deliberately open
 
-**Status:** open. S6 has a simulated flow and a call chain, below; neither phase has designed building blocks, and neither is scheduled.
+**Status:** S6 built, 2026-11-18. S7 open and undesigned.
 
 [← design index](../DESIGN.md)
 
-S1–S5 were designed one at a time, each forced by something the phase before could not do. These two are recorded as requirements only: their building blocks are not designed, because writing them down now would be fiction — I would be inventing shapes for problems I have not yet met.
+S1–S6 were designed one at a time (S6 from a simulation first), each forced by something the phase before could not do. S7 is recorded as a requirement only: its building blocks are not designed, because writing them down now would be fiction — I would be inventing shapes for problems I have not yet met.
 
-The one thing added to S6 is a **simulation**: a worked case and the call chain it produces. That is not a design of the machinery — it is a trace of what the run has to look like, and its value is that it names precisely which pieces are still open.
-
-For the same reason the cumulative system diagram stops at [S5](05-s5-permissions.md): a phase that has no blocks has nothing to draw green. The call DAG below is a different kind of drawing — one run's calls, not the system's structure.
+For the same reason S6 was drawn from a simulation before any code: a trace of what the run must look like names the pieces precisely, and the pieces then either fit or do not.
 
 ## S6 — compose
 
@@ -17,6 +15,16 @@ For the same reason the cumulative system diagram stops at [S5](05-s5-permission
 **Why.** Two failures arrive together. A long task's context fills with work that belonged to a sub-problem — S4 masks *bulk*, but it cannot know that an entire line of investigation is irrelevant. And until now "does it work" has meant "did this one run work", which is not a measurement.
 
 **Roughly what it needs.** An isolation boundary that returns a conclusion rather than a transcript; procedure files the model discovers instead of carrying; and a rig that runs N tasks, grades them, and compares against a weaker configuration. The eval rig is described separately in the [design index](../DESIGN.md#the-eval-rig--a-parallel-track) because it is required by the deliverable rather than forced by the previous phase.
+
+### The system at this phase
+
+![S6: the whole system](../diagrams/p6-structs.svg)
+
+*Source: [diagrams/p6-structs.mmd](../diagrams/p6-structs.mmd). Grey is S1–S5 unchanged; green is new here; amber is an existing block whose shape changed; green edges are connections added.*
+
+Grey is S1–S5, untouched. Green adds `compose::fan_out()`, which runs *before* the parent's loop starts: it reads the directory, runs N children of the same loop, and joins their claims by index. Amber is `agent::run` — its code does not change, but it is now reached from two places, and the second one is concurrent. Nothing is removed.
+
+The child's own record is not a second box: it is the same `Log`, one instance per child, named `.sub.jsonl` so five records in one directory can be told apart.
 
 ### A worked case — the flow, simulated
 
@@ -54,22 +62,37 @@ Task: *"notes/ holds one report in unordered chunks. Assemble them into report.m
 | largest context the orchestrator held | ~1.9k tokens |
 | largest thing a child returned | 170 bytes |
 
-**Settled.**
+**Built** *(2026-11-18)*.
 
-- **Trigger: the harness.** Deterministic, and testable — a fixture can assert `report.md` byte for byte, which a model-driven trigger cannot.
-- **Concurrency:** `tokio::task::JoinSet`, bounded at four, results written back by index.
-- **Children are read-only.** `write_file` and `bash` denied, `delegate` not registered at all.
-- **A child has its own record**, in the same log directory as the parent's.
-- **The claims enter the conversation as task text**, not as an observation — the cheapest way to make harness-injected context replayable without a new event type.
-- **S5's gate is untouched**, and fires twice on ordinary work.
+- **Trigger: the harness.** Deterministic: a fixture can assert `report.md` byte for byte.
+- **Concurrency:** `tokio::task::JoinSet`, bounded at four (`--fanout`), results written back by index so completion order is discarded.
+- **The claims enter the conversation as task text**, not as an observation — the cheapest way to make harness-injected context replayable without a new event type. `Start.task` records everything the parent was told, so replay and resume needed no change at all.
+- **A child has its own record**, tagged `.sub.jsonl` in the same directory as the parent's.
+- **What comes back is capped** at 2 KiB, truncated on a character boundary with a marker.
+
+**Three things the simulation did not predict, and the live run did.**
+
+The first run read all four files and then produced nothing usable, for three separate reasons:
+
+1. **A read-only policy is not enough; the child needs a narrower registry.** Offered `list_dir`, two of the four children listed the directory, then re-read the file several times, and hit the three-turn ceiling without answering. A child given only `read_file` cannot wander. Its policy is still `Policy::read_only()`, as a second line.
+2. **The child's client was still advertising all four tools.** The registry said one; the `tools` array said four. A child told it may call `bash` and then refused is worse than one never offered it, so the child's client is rebuilt with `reader().specs()`.
+3. **Five records in one directory were indistinguishable.** Child records now carry a `.sub` tag.
+
+The second run, on the same four chunks:
+
+```
+read 4 file(s) in notes
+approval needed  call_dffb…  write_file  {"path":"report.md","content":"The plan had three steps…"}
+```
+
+The parent ordered gamma → beta → alpha → delta from the reports alone, wrote the file in **one** call, and explained itself: *"the roadmap sentence in gamma lists hire/migrate/deploy, and the dates in beta (January), alpha (March), delta (April) run forward"*. Then it did something nobody asked for: `read_file` on its own output, and answered. Three turns, 4303 in · 886 out, and the record replays.
 
 **Still open.**
 
-- **The cap**, in bytes, and what a child does when it hits it — truncate and say so, most likely.
-- **The parent's record does not point at the child records.** A naming convention or an event would; neither is chosen.
+- **The parent's record does not point at the child records.** The `.sub` tag makes them findable; no event says these four belong to that run.
 - **A child cannot suspend.** One run has one pending decision, and four children wanting `bash` at once has no record shape — which is why children are read-only rather than merely gated.
 - **A crash mid-fan-out leaves the parent record with no reply at all.** The children's records survive, and they are the evidence.
-- **Nothing verifies the assembled order.** A wrong `cat` produces a well-formed file; the seam check above is the model's idea, not a guarantee.
+- **Nothing in the harness verifies the assembled order.** In the live run the model checked itself; a wrong order would still produce a well-formed file. That check belongs in the eval rig, where it can be an assertion rather than a habit.
 - **Model-driven `delegate` is not built.** It is the general case — the fan-out not knowable in advance — and it would share the child-run function and add one tool.
 
 **Questions to settle first.**

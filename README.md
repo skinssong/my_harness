@@ -7,9 +7,10 @@ it stops — is this program.
 Phases so far: **S1** one call and its cost. **S2** tools, a chokepoint and the
 loop. **S3** a record of every run, replay of that record, a money budget and a
 stuck detector. **S4** keeps a long task inside the window. **S5** bounds what
-the agent may do unasked, and lets a run pause for a decision. S6 and S7 are
-open. The design has one document per phase under [docs/](docs/), indexed by
-[DESIGN.md](DESIGN.md).
+the agent may do unasked, and lets a run pause for a decision. **S6** fans out
+over a directory: one child agent per file, and the parent orders what they
+report. S7 is open. The design has one document per phase under [docs/](docs/),
+indexed by [DESIGN.md](DESIGN.md).
 
 ## Run it
 
@@ -42,6 +43,7 @@ tokens 2532 in · 113 out · 2645 total · 3 turn(s)
 | `--stuck-after N` | stop when the same call and result repeat N more times (default 3, 0 off) |
 | `--context-window N` | tokens the model accepts (default 64000); past 60% of it, old tool results are masked in the request |
 | `--keep-turns K` | turns kept verbatim at the end of the request (default 2) |
+| `--fanout N` | how many subagents may run at once (default 4) |
 | `--log DIR` | where runs are recorded (default `~/.harness/runs`) |
 
 Which tools may run unasked is a policy: `read_file` and `list_dir` are allowed,
@@ -64,6 +66,19 @@ record does not carry them. A denial is not an abort: the model is told
 `denied by the operator` and carries on.
 
 Exit codes: **0** answered, **1** stopped by a rule or failed, **3** waiting.
+
+### Compose: a directory, one child per file
+
+```
+$ cargo run -- compose notes "assemble the chunks into report.md in reading order"
+read 4 file(s) in notes
+approval needed  call_dffb…  write_file  {"path":"report.md","content":"The plan had three steps…"}
+```
+
+Each file is read by its own child agent, concurrently and bounded by
+`--fanout` (default 4). Children may only read, and each writes its own record
+(`*.sub.jsonl`). What comes back is a capped claim about the file — never the
+text — so the parent orders work it never had to load.
 
 ## What it can do
 
@@ -119,6 +134,7 @@ reach is not an audit trail — `write_file` and `bash` would both reach it. Poi
 | `tool` | the contract, the registry, the chokepoint, observation shaping |
 | `tools/` | `read_file`, `list_dir`, `write_file`, `bash` |
 | `agent` | the loop, its ceiling, the budget, the stuck check and the gate |
+| `compose` | fanning out over a directory: children, claims, the join |
 | `policy` | what a tool may do unasked: allow, ask, deny |
 | `context` | the projection: what of the conversation goes on the wire |
 | `event` / `log` | what a run records, and the file it records to |
@@ -128,15 +144,16 @@ reach is not an audit trail — `write_file` and `bash` would both reach it. Poi
 ## Check it
 
 ```
-cargo test      # 110 tests, all under tests/; the provider is a localhost
+cargo test      # 115 tests, all under tests/; the provider is a localhost
                 # stub, so no key is needed
 cargo clippy --all-targets
 ```
 
 ## Not yet
 
-`bash` is gated but not sandboxed: approving it hands over a shell. No subagents
-or eval rig (S6), no MCP (S7). No retries anywhere.
+`bash` is gated but not sandboxed: approving it hands over a shell. Subagents can
+only read, and cannot pause for a decision. No eval rig, no MCP (S7). No retries
+anywhere.
 
 Masking is not compaction: an old result is replaced by a marker, never by a
 summary, so nothing is inferred about what it meant. A run that needs the masked
