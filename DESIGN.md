@@ -16,7 +16,7 @@ Each phase is one **functional requirement** — a capability the harness lacked
 
 The eval rig is drawn beside the spine rather than on it: it is required by the deliverable, not forced by the phase before it.
 
-Diagrams are cumulative. **Grey** blocks were built in an earlier phase and are unchanged; **green** blocks are new in this phase; **amber** marks an existing block whose *shape* changes; a **red dotted** edge is a connection the phase removes.
+Diagrams are cumulative. **Grey** blocks were built in an earlier phase and are unchanged; **green** blocks *and edges* are new in this phase; **amber** marks an existing block whose *shape* changes; a **red dotted** edge is a connection the phase removes.
 
 Every phase has its own document, and every phase document carries the whole system drawn at that phase — directly on top of the one before it, so the difference *is* the phase. S1–S5 are built; S6 and S7 are open, with their blocks deliberately undesigned.
 
