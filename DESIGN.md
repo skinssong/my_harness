@@ -1,6 +1,6 @@
 # Rust agent harness — design
 
-**Status:** S1–S6 built and running; S7 deliberately open.
+**Status:** S1–S5 built; S6 built in part (composition — procedures and the eval rig are open); S7 deliberately open.
 
 ## Context
 
@@ -61,7 +61,7 @@ Each phase has one document: the requirement, why the previous phase could not m
 | [S3](docs/03-s3-record.md) | explain and reproduce any run, offline | **built** |
 | [S4](docs/04-s4-context.md) | keep a long task inside the window | **built** |
 | [S5](docs/05-s5-permissions.md) | bound what the agent may do unasked | **built** |
-| [S6](docs/06-s6-s7-open.md) | sub-tasks without contaminating the main context | **built** |
+| [S6](docs/06-s6-s7-open.md) | sub-tasks without contaminating the main context | **built in part** |
 | [S7](docs/06-s6-s7-open.md#s7--extend-without-rebuilding) | extend without rebuilding | open |
 
 ## Structs, and what crosses between them

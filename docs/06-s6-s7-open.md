@@ -62,7 +62,7 @@ Task: *"notes/ holds one report in unordered chunks. Assemble them into report.m
 | largest context the orchestrator held | ~1.9k tokens |
 | largest thing a child returned | 170 bytes |
 
-**Built** *(2026-11-18)*.
+**Built** *(2026-11-18)* — the first of the requirement's three parts: sub-tasks that do not contaminate the parent's context. Reusable procedures and the eval rig are not built; they are in *Still open* below.
 
 - **Trigger: the harness.** Deterministic: a fixture can assert `report.md` byte for byte.
 - **Concurrency:** `tokio::task::JoinSet`, bounded at four (`--fanout`), results written back by index so completion order is discarded.
@@ -89,6 +89,8 @@ The parent ordered gamma → beta → alpha → delta from the reports alone, wr
 
 **Still open.**
 
+- **Reusable procedures.** The requirement's second part: procedure files the model discovers instead of carrying. Not designed.
+- **The eval rig.** The third part, and the reason the course grades what it grades: a task suite, a grader, and a weaker baseline to compare against. The assembly case is an unusually kind first fixture — `report.md` either equals the four chunks in order or it does not.
 - **The parent's record does not point at the child records.** The `.sub` tag makes them findable; no event says these four belong to that run.
 - **A child cannot suspend.** One run has one pending decision, and four children wanting `bash` at once has no record shape — which is why children are read-only rather than merely gated.
 - **A crash mid-fan-out leaves the parent record with no reply at all.** The children's records survive, and they are the evidence.
