@@ -144,7 +144,11 @@ impl Reply {
             ),
             Self::Calling { calls, .. } => {
                 let names: Vec<&str> = calls.iter().map(|call| call.name.as_str()).collect();
-                format!("the model asked for {} call(s): {}", calls.len(), names.join(", "))
+                format!(
+                    "the model asked for {} call(s): {}",
+                    calls.len(),
+                    names.join(", ")
+                )
             }
         }
     }

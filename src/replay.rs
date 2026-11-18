@@ -208,9 +208,7 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
                                 index += 1;
                             }
                             Some(found) => {
-                                return Err(ReplayError::ExpectedDecision {
-                                    found: name(found),
-                                })
+                                return Err(ReplayError::ExpectedDecision { found: name(found) })
                             }
                         }
                     }
@@ -225,9 +223,7 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
                         }) = events.get(index)
                         else {
                             return Err(match events.get(index) {
-                                Some(found) => ReplayError::ExpectedTool {
-                                    found: name(found),
-                                },
+                                Some(found) => ReplayError::ExpectedTool { found: name(found) },
                                 None => ReplayError::Incomplete,
                             });
                         };
@@ -254,9 +250,7 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
                                 });
                             };
                             let Event::Tool { call_id, ok, .. } = found else {
-                                return Err(ReplayError::ExpectedTool {
-                                    found: name(found),
-                                });
+                                return Err(ReplayError::ExpectedTool { found: name(found) });
                             };
                             if *call_id != expected.id {
                                 return Err(ReplayError::ToolOrder {
@@ -268,9 +262,7 @@ pub fn replay(events: &[Event]) -> Result<Replayed, ReplayError> {
                             let denied = asked.as_deref() == Some(expected.id.as_str())
                                 && approved == Some(false);
                             if denied && *ok {
-                                return Err(ReplayError::DenialSucceeded {
-                                    call: expected.id,
-                                });
+                                return Err(ReplayError::DenialSucceeded { call: expected.id });
                             }
                             tools += 1;
                             index += 1;

@@ -29,10 +29,13 @@ impl Serialize for ToolCall {
         let mut call = serializer.serialize_struct("ToolCall", 3)?;
         call.serialize_field("id", &self.id)?;
         call.serialize_field("type", "function")?;
-        call.serialize_field("function", &Function {
-            name: &self.name,
-            arguments: &self.arguments,
-        })?;
+        call.serialize_field(
+            "function",
+            &Function {
+                name: &self.name,
+                arguments: &self.arguments,
+            },
+        )?;
         call.end()
     }
 }

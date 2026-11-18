@@ -70,3 +70,16 @@ fn a_name_can_be_set_from_code() {
     policy.set("new_tool", Permission::Allow);
     assert_eq!(policy.decide("new_tool"), Permission::Allow);
 }
+
+/// A child may read. It starts from an empty table, so a tool added later is
+/// refused without anyone remembering to refuse it.
+#[test]
+fn a_child_may_only_read() {
+    let policy = Policy::read_only();
+
+    assert_eq!(policy.decide("read_file"), Permission::Allow);
+    assert_eq!(policy.decide("list_dir"), Permission::Allow);
+    assert_eq!(policy.decide("write_file"), Permission::Deny);
+    assert_eq!(policy.decide("bash"), Permission::Deny);
+    assert_eq!(policy.decide("a_tool_invented_tomorrow"), Permission::Deny);
+}

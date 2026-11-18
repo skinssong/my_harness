@@ -55,8 +55,7 @@ fn an_assistant_requesting_work_carries_null_content_and_the_calls() {
     assert_eq!(value["tool_calls"][0]["type"], "function");
     assert_eq!(value["tool_calls"][0]["function"]["name"], "read_file");
     assert_eq!(
-        value["tool_calls"][0]["function"]["arguments"],
-        "{\"path\":\"greeting.txt\"}",
+        value["tool_calls"][0]["function"]["arguments"], "{\"path\":\"greeting.txt\"}",
         "arguments travel as a JSON string, not as an object"
     );
 }
@@ -64,7 +63,11 @@ fn an_assistant_requesting_work_carries_null_content_and_the_calls() {
 #[test]
 fn a_result_is_owed_back_under_the_id_that_asked() {
     assert_eq!(
-        json(Message::tool_result("call_1", "read_file", "hello from disk\n")),
+        json(Message::tool_result(
+            "call_1",
+            "read_file",
+            "hello from disk\n"
+        )),
         serde_json::json!({
             "role": "tool",
             "content": "hello from disk\n",
@@ -76,7 +79,12 @@ fn a_result_is_owed_back_under_the_id_that_asked() {
 
 #[test]
 fn only_an_assistant_message_reports_calls() {
-    assert_eq!(Message::calling(vec![call("a", "read_file", "{}")], None).calls().len(), 1);
+    assert_eq!(
+        Message::calling(vec![call("a", "read_file", "{}")], None)
+            .calls()
+            .len(),
+        1
+    );
     assert!(Message::user("hi").calls().is_empty());
     assert!(Message::assistant("hi").calls().is_empty());
 }
@@ -144,7 +152,10 @@ fn the_parser_never_yields_a_calling_reply_without_calls() {
     let text_only = r#"{"choices":[{"message":{"content":"hi","tool_calls":[]}}],
                         "usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
     let reply = Reply::from_json(text_only).unwrap();
-    assert!(reply.is_answer(), "empty call list must fall through to Answer");
+    assert!(
+        reply.is_answer(),
+        "empty call list must fall through to Answer"
+    );
 
     let one_call = CALLING.replace("\"content\": null", "\"content\": \"let me look\"");
     let reply = Reply::from_json(&one_call).unwrap();
@@ -168,7 +179,10 @@ fn continuing_a_request_appends_rather_than_replaces() {
     assert_eq!(first.messages().len(), 2, "the first request is untouched");
     assert_eq!(second.messages().len(), 4);
     assert_eq!(second.messages()[0], Message::system("system"));
-    assert_eq!(second.messages()[3], Message::tool_result("call_1", "read_file", "hello"));
+    assert_eq!(
+        second.messages()[3],
+        Message::tool_result("call_1", "read_file", "hello")
+    );
 }
 
 #[test]

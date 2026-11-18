@@ -107,7 +107,10 @@ fn take(cell: &Arc<Mutex<Capture>>) -> String {
 /// Let a reader finish if the pipe closes promptly; stop it if it does not.
 async fn settle(handle: Option<JoinHandle<()>>) {
     let Some(mut handle) = handle else { return };
-    if tokio::time::timeout(DRAIN_GRACE, &mut handle).await.is_err() {
+    if tokio::time::timeout(DRAIN_GRACE, &mut handle)
+        .await
+        .is_err()
+    {
         handle.abort();
     }
 }

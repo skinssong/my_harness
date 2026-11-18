@@ -84,6 +84,18 @@ impl Policy {
         }
     }
 
+    /// What a subagent may do: read, and nothing else.
+    ///
+    /// It starts from an empty table rather than the default, so a tool added
+    /// later is refused inside a child without anyone remembering to refuse
+    /// it — the safe direction to be wrong in.
+    pub fn read_only() -> Self {
+        let mut policy = Self { rules: Vec::new() };
+        policy.set("read_file", Permission::Allow);
+        policy.set("list_dir", Permission::Allow);
+        policy
+    }
+
     /// Anything unlisted is refused. A policy that has to name every tool in
     /// order to stop it is a policy that stops nothing the day a tool is added.
     pub fn decide(&self, tool: &str) -> Permission {

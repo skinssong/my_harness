@@ -28,7 +28,9 @@ pub enum LogError {
 
 /// Somewhere to put events. A run takes one of these so the loop never has to
 /// know whether it is being recorded.
-pub trait Recorder {
+/// Where a run's events go. `Send` because a run can be one of several: a
+/// subagent holds its own recorder on its own task.
+pub trait Recorder: Send {
     fn record(&mut self, event: Event) -> Result<(), LogError>;
 }
 
@@ -51,6 +53,13 @@ pub struct Log {
 
 impl Log {
     pub fn create(dir: impl AsRef<Path>) -> Result<Self, LogError> {
+        Self::create_tagged(dir, "")
+    }
+
+    /// A record whose name says what it is. A fan-out writes one parent record
+    /// and N child records into the same directory; without a tag they are five
+    /// indistinguishable files.
+    pub fn create_tagged(dir: impl AsRef<Path>, tag: &str) -> Result<Self, LogError> {
         let dir = dir.as_ref();
         std::fs::create_dir_all(dir).map_err(|err| LogError::Write(err.to_string()))?;
 
@@ -59,10 +68,11 @@ impl Log {
             .map(|since| since.as_secs())
             .unwrap_or(0);
         let seq = NEXT_RECORD.fetch_add(1, Ordering::Relaxed);
-        let path = dir.join(format!(
-            "run-{stamp}-{}-{seq}.jsonl",
-            std::process::id()
-        ));
+        let name = match tag.is_empty() {
+            true => format!("run-{stamp}-{}-{seq}.jsonl", std::process::id()),
+            false => format!("run-{stamp}-{}-{seq}.{tag}.jsonl", std::process::id()),
+        };
+        let path = dir.join(name);
         let file = OpenOptions::new()
             .create_new(true)
             .append(true)
@@ -79,12 +89,13 @@ impl Log {
     /// run rather than starting a second file beside it.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, LogError> {
         let path = path.as_ref().to_path_buf();
-        let file = OpenOptions::new().append(true).open(&path).map_err(|err| {
-            LogError::Open {
+        let file = OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .map_err(|err| LogError::Open {
                 path: path.display().to_string(),
                 reason: err.to_string(),
-            }
-        })?;
+            })?;
         Ok(Self { path, file })
     }
 

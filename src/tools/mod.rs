@@ -27,6 +27,16 @@ pub fn builtin() -> Registry {
     ])
 }
 
+/// What a subagent is given: one way to read the file it was pointed at.
+///
+/// A narrower registry rather than a narrower policy, because the tool list is
+/// also the menu the model reads. A child offered `list_dir` will list the
+/// directory instead of reading the file it was named — observed, not
+/// hypothesised.
+pub fn reader() -> Registry {
+    Registry::new(vec![Arc::new(read_file::ReadFile)])
+}
+
 fn outside(error: WorkspaceError) -> ToolError {
     ToolError::Failed(error.to_string())
 }

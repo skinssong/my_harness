@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use harness::agent::{self, Approval, Ending, Limits};
+use harness::compose;
 use harness::log::Log;
 use harness::replay;
 use harness::tools;
@@ -24,17 +25,28 @@ use harness::{Client, Config, ContextPolicy, Policy, Request, Workspace};
 const SYSTEM: &str = "You work inside a small directory. Use the tools to look around \
 and to change things. Answer in as few words as possible.";
 
+const COMPOSE_SYSTEM: &str = "You are given one short report per file, written by agents that \
+read each file for you. The files are pieces of one document, in no particular order. Work out \
+their order from the reports, then produce the combined document. The reports are what you have; \
+reading the files yourself is not needed.";
+
 const USAGE: &str = "usage: harness [--max-turns N] [--workspace DIR] [--log DIR]
                   [--max-usd X] [--stuck-after N] [--context-window N]
                   [--keep-turns K] <task…>
        harness replay <record.jsonl>
        harness resume <record.jsonl> (--approve | --deny) <call_id>
                       [--workspace DIR] [--max-turns N] [--max-usd X]
+       harness compose DIR <instruction…> [--fanout N] [--workspace DIR]
 
 Asks one model one task. The model may list, read, write and run commands in the
 workspace, for up to N model calls (default 8). Every run is recorded under DIR
 (default ~/.harness/runs, deliberately outside the workspace); replay re-derives a recorded run without calling
 anything, and resume continues one that stopped for a decision.
+
+`compose` reads a directory with one child agent per file, then gives their
+reports to the parent as part of its task — so the parent orders work it never
+had to load. Children are concurrent, bounded by --fanout (default 4), and may
+only read.
 
   --log DIR        where runs are recorded (default ~/.harness/runs; a
                    directory inside the workspace lets the model rewrite its
@@ -67,9 +79,8 @@ async fn main() -> ExitCode {
     let outcome = match parse(&args) {
         Ok(Command::Replay(path)) => replay_record(&path),
         Ok(Command::Run(options)) => run(&options).await,
-        Ok(Command::Resume(options, record, approval)) => {
-            resume(&options, &record, approval).await
-        }
+        Ok(Command::Resume(options, record, approval)) => resume(&options, &record, approval).await,
+        Ok(Command::Compose(options, dir)) => compose(&options, &dir).await,
         Err(message) => Err(message),
     };
 
@@ -86,6 +97,8 @@ enum Command {
     Run(Options),
     Replay(PathBuf),
     Resume(Options, PathBuf, Approval),
+    /// A directory to fan out over, and the instruction for the parent.
+    Compose(Options, String),
 }
 
 struct Options {
@@ -97,6 +110,7 @@ struct Options {
     stuck_after: u32,
     context_window: usize,
     keep_turns: usize,
+    fanout: usize,
 }
 
 #[derive(Default)]
@@ -108,6 +122,7 @@ struct Flags {
     stuck_after: Option<u32>,
     context_window: Option<usize>,
     keep_turns: Option<usize>,
+    fanout: Option<usize>,
     approve: Option<String>,
     deny: Option<String>,
     words: Vec<String>,
@@ -125,6 +140,7 @@ impl Flags {
             stuck_after: self.stuck_after.unwrap_or(default.stuck_after),
             context_window: self.context_window.unwrap_or(default.context.window),
             keep_turns: self.keep_turns.unwrap_or(default.context.keep_turns),
+            fanout: self.fanout.unwrap_or(compose::DEFAULT_WIDTH),
         }
     }
 }
@@ -136,6 +152,18 @@ fn parse(args: &[String]) -> Result<Command, String> {
                 .get(1)
                 .ok_or_else(|| format!("replay needs a record path\n\n{USAGE}"))?;
             return Ok(Command::Replay(PathBuf::from(path)));
+        }
+        Some("compose") => {
+            let dir = args
+                .get(1)
+                .ok_or_else(|| format!("compose needs a directory\n\n{USAGE}"))?
+                .clone();
+            let flags = flags(&args[2..])?;
+            if flags.words.iter().all(|word| word.trim().is_empty()) {
+                return Err(format!("compose needs an instruction\n\n{USAGE}"));
+            }
+            let instruction = flags.words.join(" ");
+            return Ok(Command::Compose(flags.options(instruction), dir));
         }
         Some("resume") => {
             let path = args
@@ -157,9 +185,7 @@ fn parse(args: &[String]) -> Result<Command, String> {
 
     let flags = flags(args)?;
     if flags.approve.is_some() || flags.deny.is_some() {
-        return Err(format!(
-            "--approve and --deny belong to resume\n\n{USAGE}"
-        ));
+        return Err(format!("--approve and --deny belong to resume\n\n{USAGE}"));
     }
     if flags.words.iter().all(|word| word.trim().is_empty()) {
         return Err(USAGE.to_string());
@@ -215,6 +241,14 @@ fn flags(args: &[String]) -> Result<Flags, String> {
             }
             "--log" => {
                 flags.log_dir = Some(PathBuf::from(take("--log")?));
+                index += 2;
+            }
+            "--fanout" => {
+                let raw = take("--fanout")?;
+                flags.fanout = Some(
+                    raw.parse()
+                        .map_err(|_| format!("--fanout must be a whole number, got {raw}"))?,
+                );
                 index += 2;
             }
             "--approve" => {
@@ -319,8 +353,8 @@ fn setup(options: &Options) -> Result<(Client, Limits, Workspace), String> {
 
 async fn run(options: &Options) -> Result<ExitCode, String> {
     let (client, limits, workspace) = setup(options)?;
-    let request = Request::new(client.model(), SYSTEM, &options.task)
-        .map_err(|err| err.to_string())?;
+    let request =
+        Request::new(client.model(), SYSTEM, &options.task).map_err(|err| err.to_string())?;
     let registry = tools::builtin();
 
     let mut log = Log::create(&options.log_dir).map_err(|err| err.to_string())?;
@@ -334,11 +368,44 @@ async fn run(options: &Options) -> Result<ExitCode, String> {
     report(ending, &limits, &record)
 }
 
-async fn resume(
-    options: &Options,
-    record: &Path,
-    approval: Approval,
-) -> Result<ExitCode, String> {
+/// Read a directory with one child per file, then let the parent do the part
+/// that needs judgement: what order the claims belong in.
+async fn compose(options: &Options, dir: &str) -> Result<ExitCode, String> {
+    let (client, limits, workspace) = setup(options)?;
+    let registry = tools::builtin();
+
+    let mut log = Log::create(&options.log_dir).map_err(|err| err.to_string())?;
+    let record = log.path().to_path_buf();
+    warn_if_record_is_reachable(&record, &workspace);
+
+    let claims = compose::fan_out(
+        &client,
+        &workspace,
+        &limits,
+        &options.log_dir,
+        dir,
+        options.fanout,
+    )
+    .await
+    .map_err(|err| err.to_string())?;
+
+    println!("read {} file(s) in {dir}", claims.len());
+
+    let task = format!(
+        "{}\n\nThe reports below come from other agents, one per file, in no particular order:\n\n{}",
+        options.task,
+        compose::render(&claims)
+    );
+    let request = Request::new(client.model(), COMPOSE_SYSTEM, &task).map_err(|err| err.to_string())?;
+
+    let ending = agent::run(&client, &registry, &workspace, request, &limits, &mut log)
+        .await
+        .map_err(|err| format!("{err}\nrecord: {}", record.display()))?;
+
+    report(ending, &limits, &record)
+}
+
+async fn resume(options: &Options, record: &Path, approval: Approval) -> Result<ExitCode, String> {
     let (client, limits, workspace) = setup(options)?;
     let registry = tools::builtin();
 
@@ -346,13 +413,7 @@ async fn resume(
     let mut log = Log::open(record).map_err(|err| err.to_string())?;
 
     let ending = agent::resume(
-        &client,
-        &registry,
-        &workspace,
-        &events,
-        &approval,
-        &limits,
-        &mut log,
+        &client, &registry, &workspace, &events, &approval, &limits, &mut log,
     )
     .await
     .map_err(|err| format!("{err}\nrecord: {}", record.display()))?;

@@ -72,7 +72,12 @@ async fn a_tool_that_does_not_exist_says_which_ones_do() {
     let workspace = Workspace::open(&dir.path).unwrap();
     let registry = tools::builtin();
 
-    let observation = dispatch(&registry, &workspace, &call("c1", "delete_everything", "{}")).await;
+    let observation = dispatch(
+        &registry,
+        &workspace,
+        &call("c1", "delete_everything", "{}"),
+    )
+    .await;
     assert!(!observation.ok);
     assert!(observation.text.contains("no tool named delete_everything"));
     assert!(observation.text.contains("read_file"));
@@ -83,7 +88,12 @@ async fn arguments_that_are_not_json_become_an_observation() {
     let dir = TempWorkspace::new("badjson");
     let workspace = Workspace::open(&dir.path).unwrap();
 
-    let observation = dispatch(&tools::builtin(), &workspace, &call("c1", "read_file", "path=x")).await;
+    let observation = dispatch(
+        &tools::builtin(),
+        &workspace,
+        &call("c1", "read_file", "path=x"),
+    )
+    .await;
     assert!(!observation.ok);
     assert!(observation.text.contains("not valid JSON"));
 }
@@ -93,9 +103,16 @@ async fn arguments_of_the_wrong_shape_become_an_observation() {
     let dir = TempWorkspace::new("badshape");
     let workspace = Workspace::open(&dir.path).unwrap();
 
-    let observation = dispatch(&tools::builtin(), &workspace, &call("c1", "read_file", "{}")).await;
+    let observation = dispatch(
+        &tools::builtin(),
+        &workspace,
+        &call("c1", "read_file", "{}"),
+    )
+    .await;
     assert!(!observation.ok);
-    assert!(observation.text.contains("arguments do not match read_file"));
+    assert!(observation
+        .text
+        .contains("arguments do not match read_file"));
 }
 
 #[tokio::test]
@@ -119,7 +136,11 @@ async fn a_file_can_be_written_and_read_back() {
     let wrote = dispatch(
         &registry,
         &workspace,
-        &call("c1", "write_file", r#"{"path":"notes/greeting.txt","content":"hello from disk\n"}"#),
+        &call(
+            "c1",
+            "write_file",
+            r#"{"path":"notes/greeting.txt","content":"hello from disk\n"}"#,
+        ),
     )
     .await;
     assert!(wrote.ok, "{wrote:?}");
@@ -144,17 +165,28 @@ async fn a_long_file_is_windowed_and_says_so() {
     dispatch(
         &registry,
         &workspace,
-        &call("c1", "write_file", &serde_json::json!({"path": "ten.txt", "content": body}).to_string()),
+        &call(
+            "c1",
+            "write_file",
+            &serde_json::json!({"path": "ten.txt", "content": body}).to_string(),
+        ),
     )
     .await;
 
     let read = dispatch(
         &registry,
         &workspace,
-        &call("c2", "read_file", r#"{"path":"ten.txt","offset":8,"limit":2}"#),
+        &call(
+            "c2",
+            "read_file",
+            r#"{"path":"ten.txt","offset":8,"limit":2}"#,
+        ),
     )
     .await;
-    assert_eq!(read.text, "line 8\nline 9\n[lines 8-9 of 10; use offset to read more]");
+    assert_eq!(
+        read.text,
+        "line 8\nline 9\n[lines 8-9 of 10; use offset to read more]"
+    );
 }
 
 #[tokio::test]
@@ -175,12 +207,22 @@ async fn a_command_reports_its_exit_code_and_output() {
     let dir = TempWorkspace::new("bash");
     let workspace = Workspace::open(&dir.path).unwrap();
 
-    let ok = dispatch(&tools::builtin(), &workspace, &call("c1", "bash", r#"{"command":"echo hi"}"#)).await;
+    let ok = dispatch(
+        &tools::builtin(),
+        &workspace,
+        &call("c1", "bash", r#"{"command":"echo hi"}"#),
+    )
+    .await;
     assert!(ok.ok);
     assert!(ok.text.starts_with("exit 0"));
     assert!(ok.text.contains("hi"));
 
-    let failed = dispatch(&tools::builtin(), &workspace, &call("c2", "bash", r#"{"command":"exit 3"}"#)).await;
+    let failed = dispatch(
+        &tools::builtin(),
+        &workspace,
+        &call("c2", "bash", r#"{"command":"exit 3"}"#),
+    )
+    .await;
     assert!(!failed.ok);
     assert!(failed.text.starts_with("exit 3"));
 }
@@ -207,7 +249,12 @@ async fn the_file_tools_refuse_to_leave_the_workspace() {
     let dir = TempWorkspace::new("escape");
     let workspace = Workspace::open(&dir.path).unwrap();
 
-    let up = dispatch(&tools::builtin(), &workspace, &call("c1", "read_file", r#"{"path":"../../etc/passwd"}"#)).await;
+    let up = dispatch(
+        &tools::builtin(),
+        &workspace,
+        &call("c1", "read_file", r#"{"path":"../../etc/passwd"}"#),
+    )
+    .await;
     assert!(!up.ok);
     assert!(up.text.contains("outside the workspace"));
 
@@ -226,8 +273,14 @@ fn resolving_keeps_paths_inside_the_root() {
     let dir = TempWorkspace::new("resolve");
     let workspace = Workspace::open(&dir.path).unwrap();
 
-    assert!(workspace.resolve("a/b.txt").unwrap().starts_with(workspace.root()));
-    assert!(workspace.resolve("./a/../b.txt").unwrap().starts_with(workspace.root()));
+    assert!(workspace
+        .resolve("a/b.txt")
+        .unwrap()
+        .starts_with(workspace.root()));
+    assert!(workspace
+        .resolve("./a/../b.txt")
+        .unwrap()
+        .starts_with(workspace.root()));
     assert_eq!(
         workspace.resolve("a/../../b").unwrap_err(),
         WorkspaceError::Escapes("a/../../b".to_string())
@@ -288,7 +341,11 @@ async fn a_symlink_cannot_be_used_to_leave_the_workspace() {
     )
     .await;
     assert!(!climbed.ok, "{}", climbed.text);
-    assert!(!climbed.text.contains("root:"), "read a system file: {}", climbed.text);
+    assert!(
+        !climbed.text.contains("root:"),
+        "read a system file: {}",
+        climbed.text
+    );
 }
 
 /// A background child inherits the shell's pipes and can hold them open long
@@ -310,7 +367,11 @@ async fn a_child_holding_the_pipe_does_not_look_like_a_timeout() {
     .await;
 
     assert!(observation.ok, "{}", observation.text);
-    assert!(observation.text.starts_with("exit 0"), "{}", observation.text);
+    assert!(
+        observation.text.starts_with("exit 0"),
+        "{}",
+        observation.text
+    );
     assert!(observation.text.contains("done"), "{}", observation.text);
 }
 

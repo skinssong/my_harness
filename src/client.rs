@@ -13,8 +13,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::config::Config;
-use crate::reply::{Reply, ReplyError};
 use crate::message::Message;
+use crate::reply::{Reply, ReplyError};
 use crate::request::Request;
 
 /// A call that never returns is worse than one that fails. One place, one value.
@@ -74,7 +74,7 @@ pub enum Error {
     Reply(#[from] ReplyError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Client {
     http: reqwest::Client,
     config: Config,

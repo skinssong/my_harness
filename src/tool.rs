@@ -79,8 +79,7 @@ pub trait Tool: Send + Sync {
     const NAME: &'static str;
     const DESCRIPTION: &'static str;
 
-    async fn run(&self, args: Self::Args, workspace: &Workspace)
-        -> Result<Observation, ToolError>;
+    async fn run(&self, args: Self::Args, workspace: &Workspace) -> Result<Observation, ToolError>;
 }
 
 /// A tool with its argument type erased, so unlike tools can share a registry.
@@ -121,16 +120,13 @@ impl<T: Tool> ErasedTool for T {
         workspace: &Workspace,
     ) -> Result<Observation, ToolError> {
         let args: T::Args = serde_json::from_value(arguments).map_err(|err| {
-            ToolError::Invalid(format!(
-                "arguments do not match {}: {err}",
-                T::NAME
-            ))
+            ToolError::Invalid(format!("arguments do not match {}: {err}", T::NAME))
         })?;
         self.run(args, workspace).await
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Registry {
     tools: Vec<Arc<dyn ErasedTool>>,
 }
@@ -181,10 +177,7 @@ impl Registry {
 
         let Some(tool) = self.tools.iter().find(|tool| tool.name() == call.name) else {
             let known = self.names().join(", ");
-            return Observation::failed(format!(
-                "no tool named {}; available: {known}",
-                call.name
-            ));
+            return Observation::failed(format!("no tool named {}; available: {known}", call.name));
         };
 
         let arguments: Value = match serde_json::from_str(&call.arguments) {

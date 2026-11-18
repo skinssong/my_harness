@@ -41,13 +41,11 @@ async fn a_successful_call_sends_the_right_request_and_returns_the_reply() {
         "a gateway may refuse a request that does not identify itself: {seen}"
     );
     assert!(
-        seen.to_ascii_lowercase().contains("x-opencode-session: harness-"),
+        seen.to_ascii_lowercase()
+            .contains("x-opencode-session: harness-"),
         "a gateway may refuse a request it cannot route: {seen}"
     );
-    assert!(
-        seen.contains("reply with the word ok"),
-        "body was: {seen}"
-    );
+    assert!(seen.contains("reply with the word ok"), "body was: {seen}");
     assert!(
         seen.contains("\"temperature\":0"),
         "determinism must be stated on the wire: {seen}"

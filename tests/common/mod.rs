@@ -39,7 +39,7 @@ pub fn config_at(addr: SocketAddr, key: &str) -> Config {
 }
 
 /// Everything one request carried: headers and body as one string.
-async fn read_request(socket: &mut TcpStream) -> String {
+pub async fn read_request(socket: &mut TcpStream) -> String {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 1024];
 
@@ -120,10 +120,8 @@ static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 impl TempWorkspace {
     pub fn new(name: &str) -> Self {
         let seq = NEXT_WORKSPACE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "harness-{name}-{}-{seq}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("harness-{name}-{}-{seq}", std::process::id()));
         std::fs::create_dir_all(&path).unwrap();
         Self { path }
     }

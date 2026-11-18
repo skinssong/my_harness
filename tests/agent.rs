@@ -151,7 +151,11 @@ async fn several_calls_in_one_turn_cost_one_turn() {
     )
     .await;
 
-    assert_eq!(answered(ending).turns, 2, "two calls, still one turn each way");
+    assert_eq!(
+        answered(ending).turns,
+        2,
+        "two calls, still one turn each way"
+    );
 
     let second = &seen[1];
     assert!(second.contains("\"tool_call_id\":\"c1\""));
@@ -173,7 +177,11 @@ async fn the_ceiling_stops_a_model_that_never_answers() {
         Ok(Ending::Halted(Halt::Ceiling { turns })) => assert_eq!(turns, 2),
         other => panic!("expected the ceiling to bite, got {other:?}"),
     }
-    assert_eq!(seen.len(), 2, "it stops calling once the ceiling is reached");
+    assert_eq!(
+        seen.len(),
+        2,
+        "it stops calling once the ceiling is reached"
+    );
 }
 
 #[tokio::test]
@@ -217,7 +225,10 @@ async fn an_unknown_tool_is_reported_to_the_model() {
 #[tokio::test]
 async fn a_large_result_is_shaped_before_it_is_sent() {
     let (addr, seen) = serve_many(vec![
-        calling(&[("c1", "bash", r#"{"command":"yes x | head -c 20000"}"#)], (10, 1)),
+        calling(
+            &[("c1", "bash", r#"{"command":"yes x | head -c 20000"}"#)],
+            (10, 1),
+        ),
         answering("done", (10, 1)),
     ])
     .await;
@@ -308,7 +319,9 @@ async fn a_run_stops_when_it_overspends() {
         "the record says why it stopped: {events:?}"
     );
     assert!(
-        !events.iter().any(|event| matches!(event, Event::Tool { .. })),
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::Tool { .. })),
         "the budget was checked before acting: {events:?}"
     );
 }
@@ -545,13 +558,12 @@ async fn a_write_suspends_before_anything_else_in_the_turn_runs() {
         "the record ends at the pause: {events:?}"
     );
     assert!(
-        !events.iter().any(|event| matches!(event, Event::Tool { .. })),
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::Tool { .. })),
         "the allowed call in the same turn must not have run: {events:?}"
     );
-    assert!(
-        !dir.path.join("out.txt").exists(),
-        "nothing was written"
-    );
+    assert!(!dir.path.join("out.txt").exists(), "nothing was written");
 }
 
 /// A refusal is an observation: the model is told, and the run carries on.

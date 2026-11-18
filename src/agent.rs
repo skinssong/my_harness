@@ -66,7 +66,8 @@ impl Default for Limits {
 
 impl Limits {
     pub fn spent_usd(&self, usage: Usage) -> Option<f64> {
-        self.prices.map(|prices| prices.cost(usage.input(), usage.output()))
+        self.prices
+            .map(|prices| prices.cost(usage.input(), usage.output()))
     }
 }
 
@@ -239,148 +240,242 @@ async fn drive(
     mut spent: Usage,
     recorder: &mut dyn Recorder,
 ) -> Result<Ending, Error> {
-    let mut previous_turn: Option<String> = None;
-    let mut repeats = 0u32;
-    let mut said_it_masks = false;
+    let mut context = DriveContext::new(client, registry, workspace, limits, recorder);
 
     for turn in from_turn..=limits.max_turns {
+        let sent = context.project(&request);
+        let reply = match context.exchange(&request, sent, turn, &mut spent).await? {
+            CallOutcome::Reply(reply) => reply,
+            CallOutcome::Ended(ending) => return Ok(ending),
+        };
+
+        if let Some(ending) = context.resolve(reply, turn, spent, &mut request).await? {
+            return Ok(ending);
+        }
+    }
+
+    halt(
+        &mut *context.recorder,
+        Halt::Ceiling {
+            turns: limits.max_turns,
+        },
+    )
+}
+
+struct DriveContext<'a> {
+    client: &'a Client,
+    registry: &'a Registry,
+    workspace: &'a Workspace,
+    limits: &'a Limits,
+    recorder: &'a mut dyn Recorder,
+    previous_turn: Option<String>,
+    repeats: u32,
+    said_it_masks: bool,
+}
+
+enum CallOutcome {
+    Reply(Reply),
+    Ended(Ending),
+}
+
+impl<'a> DriveContext<'a> {
+    fn new(
+        client: &'a Client,
+        registry: &'a Registry,
+        workspace: &'a Workspace,
+        limits: &'a Limits,
+        recorder: &'a mut dyn Recorder,
+    ) -> Self {
+        Self {
+            client,
+            registry,
+            workspace,
+            limits,
+            recorder,
+            previous_turn: None,
+            repeats: 0,
+            said_it_masks: false,
+        }
+    }
+
+    fn project(&mut self, request: &Request) -> Vec<Message> {
         // What goes on the wire is a projection of what the run has said so far.
         // The transcript itself is not touched, so the record keeps every byte.
-        let sent = context::project(request.messages(), &limits.context);
-        if !said_it_masks {
+        let sent = context::project(request.messages(), &self.limits.context);
+        if !self.said_it_masks {
             let masked = context::masked_count(request.messages(), &sent);
             if masked > 0 {
                 eprintln!(
                     "context: {masked} older tool result(s) masked for this request; \
                      the record keeps them whole"
                 );
-                said_it_masks = true;
+                self.said_it_masks = true;
             }
         }
+        sent
+    }
 
-        let reply = match client.complete(&request.replaced(sent)).await {
+    async fn exchange(
+        &mut self,
+        request: &Request,
+        sent: Vec<Message>,
+        turn: u32,
+        spent: &mut Usage,
+    ) -> Result<CallOutcome, Error> {
+        let reply = match self.client.complete(&request.replaced(sent)).await {
             Ok(reply) => reply,
             Err(err) => {
                 // The provider is not a rule and not a tool: the run is over,
                 // but it still has to say so, or the record cannot be replayed.
                 // `turns` is the calls that finished, since this one did not.
-                return halt(
-                    recorder,
+                let ending = halt(
+                    &mut *self.recorder,
                     Halt::Provider {
                         turns: turn - 1,
                         detail: err.to_string(),
                     },
-                );
+                )?;
+                return Ok(CallOutcome::Ended(ending));
             }
         };
-        let usage = reply.usage();
-        spent = spent.plus(usage);
 
-        recorder.record(Event::Reply {
+        let usage = reply.usage();
+        *spent = (*spent).plus(usage);
+        self.recorder.record(Event::Reply {
             text: reply.text().map(str::to_string),
             calls: reply.calls().iter().map(LoggedCall::from).collect(),
             input: usage.input(),
             output: usage.output(),
         })?;
 
+        Ok(CallOutcome::Reply(reply))
+    }
+
+    async fn resolve(
+        &mut self,
+        reply: Reply,
+        turn: u32,
+        spent: Usage,
+        request: &mut Request,
+    ) -> Result<Option<Ending>, Error> {
         match decide(reply) {
-            Decision::Answer { text } => {
-                recorder.record(Event::Answer {
-                    text: text.clone(),
-                    turns: turn,
-                })?;
-                return Ok(Ending::Answered(Outcome {
-                    answer: text,
-                    usage: spent,
-                    turns: turn,
-                }));
-            }
-            Decision::Act { calls, text } => {
-                // A run that cannot afford to act should not ask permission to
-                // act, so the budget is settled first. It is deliberately not
-                // checked before deciding: an answer already paid for is worth
-                // returning even when it is the call that crossed the cap.
-                if let (Some(cap), Some(spent_usd)) = (limits.max_usd, limits.spent_usd(spent)) {
-                    if spent_usd > cap {
-                        return halt(
-                            recorder,
-                            Halt::Budget {
-                                turns: turn,
-                                spent: spent_usd,
-                                cap,
-                            },
-                        );
-                    }
-                }
-
-                // The gate, before any call in this turn is executed. Asking
-                // about one call after running another would make "nothing has
-                // happened yet" false.
-                if let Some(call) = asking(&calls, &limits.policy, registry) {
-                    recorder.record(Event::ApprovalRequested {
-                        call_id: call.id.clone(),
-                        name: call.name.clone(),
-                        arguments: call.arguments.clone(),
-                    })?;
-                    return Ok(Ending::Suspended(Suspension { call }));
-                }
-
-                let mut messages = vec![Message::calling(calls.clone(), text)];
-                let mut signature = String::new();
-                for call in &calls {
-                    let observed = observe(
-                        call,
-                        None,
-                        &limits.policy,
-                        registry,
-                        workspace,
-                        limits.max_observation_bytes,
-                    )
-                    .await;
-                    record_tool(recorder, call, &observed)?;
-                    signature.push_str(&call.name);
-                    signature.push('\u{1}');
-                    signature.push_str(&call.arguments);
-                    signature.push('\u{1}');
-                    signature.push_str(&observed.text);
-                    signature.push('\u{2}');
-                    messages.push(Message::tool_result(
-                        call.id.clone(),
-                        call.name.clone(),
-                        observed.text,
-                    ));
-                }
-
-                // Repetitions, not occurrences: the first turn of a streak is
-                // the one being repeated, so it counts zero. Otherwise
-                // `--stuck-after 1` would stop a run on its very first call.
-                repeats = match &previous_turn {
-                    Some(previous) if *previous == signature => repeats + 1,
-                    _ => 0,
-                };
-                previous_turn = Some(signature);
-
-                if limits.stuck_after > 0 && repeats >= limits.stuck_after {
-                    return halt(
-                        recorder,
-                        Halt::Stuck {
-                            turns: turn,
-                            repeats,
-                        },
-                    );
-                }
-
-                request = request.continued(messages);
-            }
+            Decision::Answer { text } => Ok(Some(self.answer(text, turn, spent)?)),
+            Decision::Act { calls, text } => self.act(calls, text, turn, spent, request).await,
         }
     }
 
-    halt(
-        recorder,
-        Halt::Ceiling {
-            turns: limits.max_turns,
-        },
-    )
+    fn answer(&mut self, text: String, turn: u32, spent: Usage) -> Result<Ending, Error> {
+        self.recorder.record(Event::Answer {
+            text: text.clone(),
+            turns: turn,
+        })?;
+        Ok(Ending::Answered(Outcome {
+            answer: text,
+            usage: spent,
+            turns: turn,
+        }))
+    }
+
+    async fn act(
+        &mut self,
+        calls: Vec<ToolCall>,
+        text: Option<String>,
+        turn: u32,
+        spent: Usage,
+        request: &mut Request,
+    ) -> Result<Option<Ending>, Error> {
+        // A run that cannot afford to act should not ask permission to act, so
+        // the budget is checked before the gate. It is deliberately not checked
+        // before deciding: an answer already paid for is worth returning even
+        // when it is the call that crossed the cap.
+        if let (Some(cap), Some(spent_usd)) = (self.limits.max_usd, self.limits.spent_usd(spent)) {
+            if spent_usd > cap {
+                return Ok(Some(halt(
+                    &mut *self.recorder,
+                    Halt::Budget {
+                        turns: turn,
+                        spent: spent_usd,
+                        cap,
+                    },
+                )?));
+            }
+        }
+
+        // The gate, before any call in this turn is executed. Asking about one
+        // call after running another would make "nothing has happened yet" false.
+        if let Some(call) = asking(&calls, &self.limits.policy, self.registry) {
+            self.recorder.record(Event::ApprovalRequested {
+                call_id: call.id.clone(),
+                name: call.name.clone(),
+                arguments: call.arguments.clone(),
+            })?;
+            return Ok(Some(Ending::Suspended(Suspension { call })));
+        }
+
+        let (messages, signature) = self.execute(&calls, text).await?;
+        if let Some(ending) = self.note_signature(signature, turn)? {
+            return Ok(Some(ending));
+        }
+
+        *request = request.continued(messages);
+        Ok(None)
+    }
+
+    async fn execute(
+        &mut self,
+        calls: &[ToolCall],
+        text: Option<String>,
+    ) -> Result<(Vec<Message>, String), Error> {
+        let mut messages = vec![Message::calling(calls.to_vec(), text)];
+        let mut signature = String::new();
+        for call in calls {
+            let observed = observe(
+                call,
+                None,
+                &self.limits.policy,
+                self.registry,
+                self.workspace,
+                self.limits.max_observation_bytes,
+            )
+            .await;
+            record_tool(&mut *self.recorder, call, &observed)?;
+            signature.push_str(&call.name);
+            signature.push('\u{1}');
+            signature.push_str(&call.arguments);
+            signature.push('\u{1}');
+            signature.push_str(&observed.text);
+            signature.push('\u{2}');
+            messages.push(Message::tool_result(
+                call.id.clone(),
+                call.name.clone(),
+                observed.text,
+            ));
+        }
+        Ok((messages, signature))
+    }
+
+    fn note_signature(&mut self, signature: String, turn: u32) -> Result<Option<Ending>, Error> {
+        // Repetitions, not occurrences: the first turn of a streak is the one
+        // being repeated, so it counts zero. Otherwise `--stuck-after 1` would
+        // stop a run on its very first call.
+        self.repeats = match &self.previous_turn {
+            Some(previous) if *previous == signature => self.repeats + 1,
+            _ => 0,
+        };
+        self.previous_turn = Some(signature);
+
+        if self.limits.stuck_after > 0 && self.repeats >= self.limits.stuck_after {
+            return Ok(Some(halt(
+                &mut *self.recorder,
+                Halt::Stuck {
+                    turns: turn,
+                    repeats: self.repeats,
+                },
+            )?));
+        }
+
+        Ok(None)
+    }
 }
 
 /// The first call in a turn that policy will not let through unasked. An
@@ -389,9 +484,7 @@ async fn drive(
 fn asking(calls: &[ToolCall], policy: &Policy, registry: &Registry) -> Option<ToolCall> {
     calls
         .iter()
-        .find(|call| {
-            registry.knows(&call.name) && policy.decide(&call.name) == Permission::Ask
-        })
+        .find(|call| registry.knows(&call.name) && policy.decide(&call.name) == Permission::Ask)
         .cloned()
 }
 
@@ -428,10 +521,7 @@ async fn observe(
 ) -> Observation {
     match allowed(call, approval, policy, registry) {
         false => Observation::failed("denied by the operator"),
-        true => registry
-            .dispatch(call, workspace)
-            .await
-            .shaped(max_bytes),
+        true => registry.dispatch(call, workspace).await.shaped(max_bytes),
     }
 }
 
@@ -503,9 +593,15 @@ fn rebuild(events: &[Event]) -> Result<(Request, u32, Usage), Error> {
                 name,
                 text,
                 ..
-            } => messages.push(Message::tool_result(call_id.clone(), name.clone(), text.clone())),
+            } => messages.push(Message::tool_result(
+                call_id.clone(),
+                name.clone(),
+                text.clone(),
+            )),
             Event::Answer { .. } | Event::Halt(_) => break,
-            Event::Start { .. } | Event::ApprovalRequested { .. } | Event::ApprovalDecided { .. } => {}
+            Event::Start { .. }
+            | Event::ApprovalRequested { .. }
+            | Event::ApprovalDecided { .. } => {}
         }
     }
 

@@ -148,7 +148,10 @@ async fn the_record_holds_every_turn_in_order() {
 #[tokio::test]
 async fn a_record_whose_answer_does_not_match_its_reply_is_caught() {
     let (mut events, _ending, _dir) = recorded_run(
-        vec![calling(&[("c1", "list_dir", "{}")], (1, 1)), answering("done", (1, 1))],
+        vec![
+            calling(&[("c1", "list_dir", "{}")], (1, 1)),
+            answering("done", (1, 1)),
+        ],
         8,
     )
     .await;
@@ -173,7 +176,10 @@ async fn tool_results_out_of_order_are_caught() {
     let (mut events, _ending, _dir) = recorded_run(
         vec![
             calling(
-                &[("c1", "read_file", r#"{"path":"a.txt"}"#), ("c2", "list_dir", "{}")],
+                &[
+                    ("c1", "read_file", r#"{"path":"a.txt"}"#),
+                    ("c2", "list_dir", "{}"),
+                ],
                 (1, 1),
             ),
             answering("done", (1, 1)),
@@ -199,7 +205,10 @@ async fn tool_results_out_of_order_are_caught() {
 #[tokio::test]
 async fn a_record_that_stops_before_the_tool_result_is_incomplete() {
     let (mut events, _ending, _dir) = recorded_run(
-        vec![calling(&[("c1", "list_dir", "{}")], (1, 1)), answering("done", (1, 1))],
+        vec![
+            calling(&[("c1", "list_dir", "{}")], (1, 1)),
+            answering("done", (1, 1)),
+        ],
         8,
     )
     .await;
@@ -213,11 +222,8 @@ async fn a_record_that_stops_before_the_tool_result_is_incomplete() {
 
 #[tokio::test]
 async fn a_halted_run_replays_as_having_no_answer() {
-    let (events, ending, _dir) = recorded_run(
-        vec![calling(&[("c1", "list_dir", "{}")], (10, 1))],
-        1,
-    )
-    .await;
+    let (events, ending, _dir) =
+        recorded_run(vec![calling(&[("c1", "list_dir", "{}")], (10, 1))], 1).await;
 
     assert!(matches!(
         ending,
@@ -352,7 +358,11 @@ fn a_record_cut_mid_line_keeps_what_landed() {
 /// Run until the policy stops it, leaving a record that ends at the pause.
 async fn suspended_run() -> (TempWorkspace, std::path::PathBuf, String) {
     let (addr, _seen) = serve_many(vec![calling(
-        &[("call_1", "write_file", r#"{"path":"out.txt","content":"written"}"#)],
+        &[(
+            "call_1",
+            "write_file",
+            r#"{"path":"out.txt","content":"written"}"#,
+        )],
         (10, 1),
     )])
     .await;
@@ -399,7 +409,10 @@ async fn a_suspended_record_replays_as_waiting() {
 #[tokio::test]
 async fn approving_a_suspension_runs_the_call_and_finishes_the_run() {
     let (dir, path, call_id) = suspended_run().await;
-    assert!(!dir.path.join("out.txt").exists(), "nothing ran while waiting");
+    assert!(
+        !dir.path.join("out.txt").exists(),
+        "nothing ran while waiting"
+    );
 
     let (addr, seen) = serve_many(vec![answering("written", (20, 2))]).await;
     let workspace = Workspace::open(&dir.path).unwrap();

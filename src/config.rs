@@ -125,7 +125,10 @@ impl Config {
     }
 }
 
-fn required(get: &impl Fn(&str) -> Option<String>, name: &'static str) -> Result<String, ConfigError> {
+fn required(
+    get: &impl Fn(&str) -> Option<String>,
+    name: &'static str,
+) -> Result<String, ConfigError> {
     match get(name).map(|value| value.trim().to_string()) {
         Some(value) if !value.is_empty() => Ok(value),
         _ => Err(ConfigError::Missing(name)),

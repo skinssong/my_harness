@@ -105,11 +105,7 @@ pub enum Halt {
     /// The turn ceiling: no answer within the calls allowed.
     Ceiling { turns: u32 },
     /// The money budget was passed.
-    Budget {
-        turns: u32,
-        spent: f64,
-        cap: f64,
-    },
+    Budget { turns: u32, spent: f64, cap: f64 },
     /// The same call and result kept repeating.
     Stuck { turns: u32, repeats: u32 },
     /// The provider stopped answering, or answered with something unreadable.
@@ -130,7 +126,10 @@ impl std::fmt::Display for Halt {
                  at turn {turns}"
             ),
             Self::Provider { turns, detail } => {
-                write!(f, "the provider stopped answering after {turns} turn(s): {detail}")
+                write!(
+                    f,
+                    "the provider stopped answering after {turns} turn(s): {detail}"
+                )
             }
         }
     }

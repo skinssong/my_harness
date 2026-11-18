@@ -54,7 +54,11 @@ fn the_prefix_and_the_tail_survive() {
     assert!(sent.len() == messages.len(), "nothing is removed");
     assert_eq!(sent[0], messages[0], "the system message is pinned");
     assert_eq!(sent[1], messages[1], "the task is pinned");
-    assert_eq!(&sent[8..], &messages[8..], "the last two turns are verbatim");
+    assert_eq!(
+        &sent[8..],
+        &messages[8..],
+        "the last two turns are verbatim"
+    );
 }
 
 #[test]

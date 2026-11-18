@@ -5,8 +5,8 @@
 //! body, a provider response read back, an answer reported.
 
 use harness::config::{Config, ConfigError, Prices};
-use harness::reply::{Reply, ReplyError};
 use harness::message::Message;
+use harness::reply::{Reply, ReplyError};
 use harness::request::{Request, RequestError};
 
 fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
@@ -14,12 +14,7 @@ fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    move |key| {
-        owned
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.clone())
-    }
+    move |key| owned.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
 }
 
 fn full(base: &str) -> Vec<(&'static str, String)> {

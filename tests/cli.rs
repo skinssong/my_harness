@@ -12,8 +12,7 @@ use common::{response, serve_many, serve_once, TempWorkspace};
 
 const BIN: &str = env!("CARGO_BIN_EXE_harness");
 
-const BODY: &str =
-    r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":27,"completion_tokens":1}}"#;
+const BODY: &str = r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":27,"completion_tokens":1}}"#;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn one_task_in_one_answer_and_its_cost_out() {
@@ -30,7 +29,10 @@ async fn one_task_in_one_answer_and_its_cost_out() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "exit was non-zero. stderr: {stderr}");
+    assert!(
+        output.status.success(),
+        "exit was non-zero. stderr: {stderr}"
+    );
     assert!(stdout.contains("ok"), "stdout: {stdout}");
     assert!(stdout.contains("27 in"), "stdout: {stdout}");
     assert!(stdout.contains("1 out"), "stdout: {stdout}");
@@ -142,7 +144,10 @@ async fn a_run_is_recorded_and_replays_with_no_credentials_at_all() {
         replayed_stdout.contains("replayed 1 turn(s)"),
         "stdout: {replayed_stdout}"
     );
-    assert!(replayed_stdout.contains("27 in"), "stdout: {replayed_stdout}");
+    assert!(
+        replayed_stdout.contains("27 in"),
+        "stdout: {replayed_stdout}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
