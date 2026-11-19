@@ -1,14 +1,10 @@
-# S6 and S7 — deliberately open
+# S6 — compose
 
-**Status:** S6 built, 2026-11-18. S7 open and undesigned.
+**Status:** built in part, 2026-11-18. Composition is built; reusable procedures and the eval rig are open.
 
 [← design index](../DESIGN.md)
 
-S1–S6 were designed one at a time (S6 from a simulation first), each forced by something the phase before could not do. S7 is recorded as a requirement only: its building blocks are not designed, because writing them down now would be fiction — I would be inventing shapes for problems I have not yet met.
-
-For the same reason S6 was drawn from a simulation before any code: a trace of what the run must look like names the pieces precisely, and the pieces then either fit or do not.
-
-## S6 — compose
+S1–S6 were designed one at a time, each forced by something the phase before it could not do. S6 is the first whose requirement arrived in three parts, of which one is built. It was also drawn from a simulation before any code: a trace of what the run must look like names the pieces precisely, and the pieces then either fit or do not.
 
 **Requirement.** Sub-tasks run without contaminating the main context, reusable procedures load on demand, and a task suite can be run and graded.
 
@@ -101,18 +97,3 @@ The parent ordered gamma → beta → alpha → delta from the reports alone, wr
 
 - What is a *task*, for the eval rig? A prompt, a starting directory, and a checkable outcome — but "checkable" is the whole difficulty. The assembly case is unusually kind: `report.md` either equals the four chunks in the fixed order or it does not.
 - Is model-driven delegation in scope, or is harness-driven fan-out the whole of S6? The general mechanism is the thing the course's "agent composes" story wants; the deterministic one is the thing that can be measured first.
-
-## S7 — extend without rebuilding
-
-**Requirement.** New tools arrive over a protocol rather than as compiled-in code.
-
-**Why.** S2's tools are compiled in, so every capability is a rebuild and a release. The tool contract at S2 is already a name, a description, a schema and a call — which is exactly what a protocol can carry.
-
-**Roughly what it needs.** A client for the protocol, and a projection from remote tools into the S2 contract: `tools/list` supplies name, description and `inputSchema`; `tools/call` supplies execution. The loop does not change, because it only ever asks "name, what does it accept, run it".
-
-**Questions to settle first.**
-
-- **Where is the boundary?** A remote tool runs with the *server's* privileges. S5's approval can decide whether to call it; nothing can bound what it does. That has to be said out loud in the policy, not discovered later.
-- **Names.** Two servers can both offer `read_file`. Namespacing is cheap now and awkward to add after records exist.
-- **Errors.** The protocol reports tool failure in the result rather than the transport, which maps onto the existing rule — but the mapping has to be written down and tested, and a server that dies mid-call is a transport failure, not an observation.
-- **When to discover.** Once at startup, or per run? Tool lists change; a record has to say which list a run was given.
