@@ -131,7 +131,7 @@ reach is not an audit trail — `write_file` and `bash` would both reach it. Poi
 | `config` | three settings, validated once |
 | `message` / `reply` / `request` | the shapes on the wire |
 | `client` | the single boundary: one POST, three ways to fail |
-| `tool` | the contract, the registry, the chokepoint, observation shaping |
+| `tools/contract` | the tool trait, observations, the registry and the chokepoint |
 | `tools/` | `read_file`, `list_dir`, `write_file`, `bash` |
 | `agent` | the loop, its ceiling, the budget, the stuck check and the gate |
 | `compose` | fanning out over a directory: children, claims, the join |

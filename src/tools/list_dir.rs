@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::outside;
-use crate::tool::{Observation, Tool, ToolError};
+use crate::tools::{Observation, Tool, ToolError};
 use crate::workspace::Workspace;
 
 const MAX_ENTRIES: usize = 500;

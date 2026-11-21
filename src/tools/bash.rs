@@ -22,7 +22,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::task::JoinHandle;
 
-use crate::tool::{Observation, Tool, ToolError};
+use crate::tools::{Observation, Tool, ToolError};
 use crate::workspace::Workspace;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 10;

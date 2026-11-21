@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use super::outside;
-use crate::tool::{Observation, Tool, ToolError};
+use crate::tools::{Observation, Tool, ToolError};
 use crate::workspace::Workspace;
 
 const DEFAULT_LINES: u32 = 2_000;

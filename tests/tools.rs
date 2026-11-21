@@ -9,7 +9,7 @@ mod common;
 use common::TempWorkspace;
 
 use harness::message::ToolCall;
-use harness::tool::{Observation, Registry};
+use harness::tools::{Observation, Registry};
 use harness::tools;
 use harness::workspace::{Workspace, WorkspaceError};
 

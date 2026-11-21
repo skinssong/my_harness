@@ -28,7 +28,7 @@ use crate::message::{Message, ToolCall};
 use crate::policy::{Permission, Policy};
 use crate::reply::{Reply, Usage};
 use crate::request::Request;
-use crate::tool::{Observation, Registry, MAX_OBSERVATION_BYTES};
+use crate::tools::{Observation, Registry, MAX_OBSERVATION_BYTES};
 use crate::workspace::Workspace;
 
 #[derive(Debug, Clone, PartialEq)]

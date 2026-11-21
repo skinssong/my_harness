@@ -25,7 +25,7 @@ use crate::client::Client;
 use crate::log::Log;
 use crate::policy::Policy;
 use crate::request::Request;
-use crate::tool::Registry;
+use crate::tools::Registry;
 use crate::workspace::{Workspace, WorkspaceError};
 
 /// How many children may be in flight at once. Unbounded fan-out over a

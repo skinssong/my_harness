@@ -17,7 +17,6 @@ pub mod policy;
 pub mod replay;
 pub mod reply;
 pub mod request;
-pub mod tool;
 pub mod tools;
 pub mod workspace;
 
@@ -33,5 +32,5 @@ pub use policy::{Permission, Policy};
 pub use replay::{replay, ReplayError, Replayed};
 pub use reply::{Reply, ReplyError, Usage};
 pub use request::{Request, RequestError};
-pub use tool::{Observation, Registry, Tool, ToolError};
+pub use tools::{Observation, Registry, Tool, ToolError};
 pub use workspace::Workspace;

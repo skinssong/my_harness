@@ -1,21 +1,26 @@
-//! The four built-in tools, and the registry that holds them.
+//! Tools: the contract they satisfy, and the four that are built in.
 //!
-//! Each tool is a type with an `Args` struct. That struct is both the schema
-//! sent to the model and the parser applied to what comes back, so the two
-//! cannot disagree.
+//! A tool is a name, a description, an argument type and some work. The
+//! argument type is the contract in both directions: it renders the JSON Schema
+//! the model is shown, and it is what the model's arguments are parsed into. One
+//! type, so the schema cannot advertise a field the parser does not accept. That
+//! contract, its registry and observation shaping live in [`contract`]; the
+//! implementations live beside it.
 //!
 //! `bash` deserves a warning: it runs a real shell, and a shell can leave the
 //! workspace. Containment for the file tools is lexical and lives in
 //! `Workspace`; containing a shell needs permissions, which is S5.
 
 pub mod bash;
+mod contract;
 pub mod list_dir;
 pub mod read_file;
 pub mod write_file;
 
+pub use contract::{Observation, Registry, Tool, ToolError, MAX_OBSERVATION_BYTES};
+
 use std::sync::Arc;
 
-use crate::tool::{Registry, ToolError};
 use crate::workspace::WorkspaceError;
 
 pub fn builtin() -> Registry {
